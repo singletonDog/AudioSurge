@@ -64,10 +64,10 @@ bool WasapiCapture::initialize() {
               << format->wBitsPerSample << "bit, "
               << (is_float_format_ ? "Float" : "PCM") << std::endl;
 
-    // 初始化 Loopback 模式
+    // 初始化 Loopback 模式（缓冲区 10ms 以降低延迟）
     hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                     AUDCLNT_STREAMFLAGS_LOOPBACK,
-                                    1000000, 0, format, nullptr);
+                                    100000, 0, format, nullptr);
     CoTaskMemFree(format);
     if (FAILED(hr)) { std::cerr << "[错误] 初始化 Loopback 失败" << std::endl; return false; }
 

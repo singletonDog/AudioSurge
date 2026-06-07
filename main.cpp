@@ -43,9 +43,9 @@ int main() {
         return 1;
     }
 
-    // 启动捕获，等待缓冲区填充
+    // 启动捕获，短暂等待缓冲区填充
     capture.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // 启动所有输出设备
     if (!output.startAll()) {

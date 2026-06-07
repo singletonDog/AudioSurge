@@ -129,9 +129,10 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& name) {
     format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
 
     // AUTOCONVERTPCM + SRC_DEFAULT_QUALITY：Windows 内核自动处理采样率转换
+    // 缓冲区 10ms 以降低延迟
     hr = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                                   1000000, 0, &format, nullptr);
+                                   100000, 0, &format, nullptr);
     if (FAILED(hr)) {
         std::cerr << "[警告] 无法初始化设备 " << name << std::endl;
         audio_client->Release();
