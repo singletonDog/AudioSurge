@@ -128,14 +128,24 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& name) {
     format.nBlockAlign = format.nChannels * 4;
     format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
 
-    // AUTOCONVERTPCM + SRC_DEFAULT_QUALITY：Windows 内核自动处理采样率转换
+    // AUTOCONVERTPCM + SRC_DEFAULT_QUALITY + 事件驱动：Windows 内核自动处理采样率转换
     // 缓冲区 10ms 以降低延迟
+    HANDLE event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     hr = audio_client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                   AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                                   AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                    100000, 0, &format, nullptr);
     if (FAILED(hr)) {
         std::cerr << "[警告] 无法初始化设备 " << name << std::endl;
         audio_client->Release();
+        CloseHandle(event);
+        return false;
+    }
+
+    // 绑定事件：设备需要更多数据时自动触发
+    hr = audio_client->SetEventHandle(event);
+    if (FAILED(hr)) {
+        audio_client->Release();
+        CloseHandle(event);
         return false;
     }
 
@@ -158,6 +168,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& name) {
     stream->device = device;
     stream->audio_client = audio_client;
     stream->render_client = render_client;
+    stream->event = event;
     stream->read_pos = buffer_.getWritePos();
     stream->buffer_frames = buffer_frames;
     stream->thread = std::thread(&WasapiOutput::renderThread, this, stream);
@@ -172,11 +183,15 @@ void WasapiOutput::renderThread(RenderStream* stream) {
     stream->audio_client->Start();
 
     while (running_) {
+        // 等待事件：设备需要更多数据时立即唤醒，否则挂起（零 CPU 开销）
+        DWORD wait = WaitForSingleObject(stream->event, 100);
+        if (wait == WAIT_TIMEOUT) continue;
+
         UINT32 padding = 0;
         if (FAILED(stream->audio_client->GetCurrentPadding(&padding))) break;
 
         UINT32 available = stream->buffer_frames - padding;
-        if (available == 0) { Sleep(1); continue; }
+        if (available == 0) continue;
 
         BYTE* data = nullptr;
         if (FAILED(stream->render_client->GetBuffer(available, &data))) break;
@@ -198,6 +213,7 @@ void WasapiOutput::stopAll() {
         if (s->render_client) s->render_client->Release();
         if (s->audio_client) s->audio_client->Release();
         if (s->device) s->device->Release();
+        if (s->event) CloseHandle(s->event);
         delete s;
     }
     streams_.clear();

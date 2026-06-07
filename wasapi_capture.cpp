@@ -18,6 +18,7 @@ WasapiCapture::~WasapiCapture() {
     if (audio_client_) audio_client_->Release();
     if (device_) device_->Release();
     if (enumerator_) enumerator_->Release();
+    if (event_) CloseHandle(event_);
     CoUninitialize();
 }
 
@@ -64,12 +65,17 @@ bool WasapiCapture::initialize() {
               << format->wBitsPerSample << "bit, "
               << (is_float_format_ ? "Float" : "PCM") << std::endl;
 
-    // 初始化 Loopback 模式（缓冲区 10ms 以降低延迟）
+    // 初始化 Loopback + 事件驱动模式（缓冲区 10ms）
+    event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
     hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                    AUDCLNT_STREAMFLAGS_LOOPBACK,
+                                    AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                     100000, 0, format, nullptr);
     CoTaskMemFree(format);
     if (FAILED(hr)) { std::cerr << "[错误] 初始化 Loopback 失败" << std::endl; return false; }
+
+    // 绑定事件：缓冲区有数据时自动触发，无需轮询
+    hr = audio_client_->SetEventHandle(event_);
+    if (FAILED(hr)) { std::cerr << "[错误] 设置事件句柄失败" << std::endl; return false; }
 
     // 获取捕获客户端
     hr = audio_client_->GetService(__uuidof(IAudioCaptureClient), (void**)&capture_client_);
@@ -100,11 +106,15 @@ void WasapiCapture::convertIntToFloat(const BYTE* data, float* output, size_t co
 
 void WasapiCapture::captureThread() {
     audio_client_->Start();
-    std::cout << "[信息] WASAPI Loopback 捕获已启动" << std::endl;
+    std::cout << "[信息] WASAPI Loopback 捕获已启动 (事件驱动)" << std::endl;
 
     std::vector<float> convert_buf;
 
     while (running_) {
+        // 等待事件：缓冲区有数据时立即唤醒，无数据时挂起（零 CPU 开销）
+        DWORD wait = WaitForSingleObject(event_, 100);
+        if (wait == WAIT_TIMEOUT) continue;
+
         UINT32 packet_len = 0;
         capture_client_->GetNextPacketSize(&packet_len);
 
@@ -133,8 +143,6 @@ void WasapiCapture::captureThread() {
             capture_client_->ReleaseBuffer(frames);
             if (FAILED(capture_client_->GetNextPacketSize(&packet_len))) break;
         }
-
-        Sleep(10);
     }
 
     audio_client_->Stop();

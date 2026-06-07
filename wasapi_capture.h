@@ -36,6 +36,7 @@ private:
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    HANDLE event_ = nullptr;          // 事件驱动：数据就绪事件
 
     int sample_rate_ = 44100;
     int channels_ = 2;

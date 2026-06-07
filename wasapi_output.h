@@ -36,9 +36,10 @@ private:
         IMMDevice* device = nullptr;
         IAudioClient* audio_client = nullptr;
         IAudioRenderClient* render_client = nullptr;
+        HANDLE event = nullptr;        // 事件驱动：需要更多数据时触发
         std::thread thread;
-        size_t read_pos = 0;          // 独立读取位置
-        UINT32 buffer_frames = 0;     // WASAPI 缓冲区帧数
+        size_t read_pos = 0;           // 独立读取位置
+        UINT32 buffer_frames = 0;      // WASAPI 缓冲区帧数
     };
 
     void renderThread(RenderStream* stream);
