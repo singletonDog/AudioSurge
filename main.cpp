@@ -20,7 +20,7 @@ int main() {
     SetConsoleCP(CP_UTF8);
 
     std::cout << "========================================" << std::endl;
-    std::cout << "    多音箱同步输出系统" << std::endl;
+    std::cout << "    AudioMirror - 多音箱同步输出" << std::endl;
     std::cout << "========================================" << std::endl;
 
     std::signal(SIGINT, onSignal);
