@@ -19,7 +19,7 @@ WasapiCapture::~WasapiCapture() {
     if (device_) device_->Release();
     if (enumerator_) enumerator_->Release();
     if (event_) CloseHandle(event_);
-    CoUninitialize();
+    // 不调用 CoUninitialize - COM 由调用者管理
 }
 
 bool WasapiCapture::isFloatFormat(const WAVEFORMATEX* format) {
