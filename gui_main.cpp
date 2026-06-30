@@ -16,6 +16,18 @@
 #include "wasapi_capture.h"
 #include "wasapi_output.h"
 
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+
+static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
+
 // PKEY_Device_FriendlyName - 避免依赖 functiondiscoverykeys_devpkey.h
 static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
     {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14
@@ -244,7 +256,7 @@ static const char* kHtmlContent = R"html(<!DOCTYPE html>
   --radius-md:14px;
   --radius-sm:8px;
 }
-html,body{height:100%;overflow:hidden;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--text)}
+html,body{height:100%;overflow:hidden;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--text);background:#12122b}
 body{
   background:
     radial-gradient(ellipse at 15% 20%, rgba(109,59,255,0.18) 0%, transparent 50%),
@@ -1032,11 +1044,10 @@ public:
         wc.hInstance = hInst;
         wc.lpszClassName = L"AudioFluxWnd";
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        wc.hbrBackground = nullptr;
         RegisterClassW(&wc);
 
         // WS_POPUP + WS_THICKFRAME: 无可见边框，但保留系统缩放能力
-        // 通过 JS mousedown 检测边缘/标题栏，C++ 端 ReleaseCapture + WM_NCLBUTTONDOWN 实现拖动和缩放
         RECT wr = { 0, 0, 1000, 1200 };
         AdjustWindowRect(&wr, WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU, FALSE);
         int screenW = GetSystemMetrics(SM_CXSCREEN);
@@ -1051,9 +1062,14 @@ public:
             x, y, winW, winH, nullptr, nullptr, hInst, this);
         if (!hwnd_) return false;
 
-        // 标准无边框窗口做法：DwmExtendFrameIntoClientArea 保留系统阴影
-        // 配合 WM_NCCALCSIZE 返回 0 移除可见边框但保留阴影和 Aero Snap
-        MARGINS margins = { 1, 1, 1, 1 };
+        // 标准无边框窗口做法：保留系统阴影和 Aero Snap，但不把 DWM frame 扩进客户区
+        BOOL darkMode = TRUE;
+        DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
+        COLORREF captionColor = kWindowBgColor;
+        DwmSetWindowAttribute(hwnd_, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
+        COLORREF borderColor = kWindowBgColor;
+        DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &borderColor, sizeof(borderColor));
+        MARGINS margins = { 0, 0, 0, 0 };
         DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
@@ -1127,6 +1143,13 @@ private:
                             }
                             controller_ = ctrl;
                             ctrl->AddRef();
+
+                            ICoreWebView2Controller2* controller2 = nullptr;
+                            if (SUCCEEDED(ctrl->QueryInterface(IID_ICoreWebView2Controller2, reinterpret_cast<void**>(&controller2))) && controller2) {
+                                COREWEBVIEW2_COLOR bg = { 255, 18, 18, 43 };
+                                controller2->put_DefaultBackgroundColor(bg);
+                                controller2->Release();
+                            }
 
                             // Get ICoreWebView2
                             HRESULT hr3 = ctrl->get_CoreWebView2(&webView_);
@@ -1335,7 +1358,6 @@ private:
 
         switch (msg) {
         case WM_NCCALCSIZE: {
-            // 标准做法：wParam=TRUE 时返回 0，移除标准边框但保留阴影和 Aero Snap
             if (wParam == TRUE) return 0;
             break;
         }
@@ -1345,6 +1367,15 @@ private:
             mmi->ptMinTrackSize.x = 700;
             mmi->ptMinTrackSize.y = 500;
             return 0;
+        }
+
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            HBRUSH brush = CreateSolidBrush(RGB(18, 18, 43));
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, brush);
+            DeleteObject(brush);
+            return 1;
         }
 
         case WM_SIZE: {
