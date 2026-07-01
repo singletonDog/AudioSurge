@@ -3,6 +3,7 @@
 #include <dwmapi.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <endpointvolume.h>
 #include <propsys.h>
 #include <WebView2.h>
 #include <string>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <algorithm>
 #include <sstream>
+#include <objbase.h>
 #include "ring_buffer.h"
 #include "wasapi_capture.h"
 #include "wasapi_output.h"
@@ -33,6 +35,7 @@
 #endif
 
 static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
+static constexpr UINT WM_APP_VOLUME_CHANGED = WM_APP + 1;
 
 // PKEY_Device_FriendlyName - 避免依赖 functiondiscoverykeys_devpkey.h
 static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
@@ -73,6 +76,36 @@ static std::string EscapeJson(const std::string& s) {
     }
     return r;
 }
+
+static int ClampVolume(int volume) {
+    return (std::max)(0, (std::min)(100, volume));
+}
+
+static int ScalarToVolume(float scalar) {
+    return ClampVolume(static_cast<int>(std::round(scalar * 100.0f)));
+}
+
+static float VolumeToScalar(int volume) {
+    return ClampVolume(volume) / 100.0f;
+}
+
+static bool IsSameGuid(const GUID& a, const GUID& b) {
+    return IsEqualGUID(a, b) != 0;
+}
+
+static const GUID kAudioFluxVolumeContext =
+    {0x4f23ec26, 0x66ba, 0x4c9f, {0x96, 0x27, 0x7d, 0x97, 0xf2, 0x57, 0xd9, 0x5b}};
+
+struct SystemVolumeState {
+    int volume = 100;
+    bool muted = false;
+};
+
+struct VolumeChangedEvent {
+    std::string device_id;
+    int volume = 100;
+    bool muted = false;
+};
 
 // ============================================================================
 //  Minimal JSON parser
@@ -368,7 +401,9 @@ body::before{
 
 /* Volume Area - flex:1 占据所有剩余空间，滑块紧接设备名 */
 .vol-area{display:flex;align-items:center;gap:12px;flex:1;min-width:0;margin-left:8px}
-.vol-icon{font-size:16px;color:var(--text2);flex-shrink:0}
+.vol-icon{font-size:16px;color:var(--text2);flex-shrink:0;cursor:pointer;user-select:none;transition:color 0.15s, transform 0.15s}
+.vol-icon:hover{color:var(--accent2);transform:scale(1.08)}
+.vol-icon.muted{color:var(--red)}
 .vol-slider{flex:1;min-width:0}
 .vol-pct{font-size:15px;font-weight:700;color:var(--accent2);min-width:52px;text-align:right;letter-spacing:0.3px;flex-shrink:0}
 
@@ -527,6 +562,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var card = document.createElement('div');
       card.className = 'device-card';
       card.dataset.deviceId = dev.id;
+      var volume = typeof dev.volume === 'number' ? dev.volume : 100;
+      var muted = !!dev.muted;
+      card.dataset.muted = muted ? 'true' : 'false';
       var statusText = dev.isDefault ? '默认设备' : '已连接';
       card.innerHTML =
         '<div class="card-header">' +
@@ -538,8 +576,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           '</div>' +
           '<div class="vol-area">' +
             '<span class="vol-icon">&#128266;</span>' +
-            '<input type="range" class="vol-slider slider-main" min="0" max="100" value="100">' +
-            '<span class="vol-pct">100%</span>' +
+            '<input type="range" class="vol-slider slider-main" min="0" max="100" value="' + volume + '">' +
+            '<span class="vol-pct">' + volume + '%</span>' +
           '</div>' +
         '</div>' +
         '<div class="filter-row">' +
@@ -578,10 +616,10 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       updateSlider(volSlider);
       updateSlider(hpfSlider);
       updateSlider(lpfSlider);
+      updateMuteUi(card);
 
       volSlider.addEventListener('input', function() {
-        card.querySelector('.vol-pct').textContent = this.value + '%';
-        updateSlider(this);
+        setVolumeUi(card, parseInt(this.value), card.dataset.muted === 'true', false);
         sendUpdateDebounced(dev.id);
       });
       hpfSlider.addEventListener('input', function() {
@@ -620,7 +658,35 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
         }
         sendUpdate(dev.id);
       });
+      card.querySelector('.vol-icon').addEventListener('click', function() {
+        setVolumeUi(card, parseInt(card.querySelector('.vol-slider').value), !(card.dataset.muted === 'true'), false);
+        sendUpdate(dev.id);
+      });
     });
+  }
+
+  function updateMuteUi(card) {
+    var icon = card.querySelector('.vol-icon');
+    var muted = card.dataset.muted === 'true';
+    icon.innerHTML = muted ? '&#128263;' : '&#128266;';
+    icon.className = 'vol-icon' + (muted ? ' muted' : '');
+    icon.title = muted ? '取消静音' : '静音';
+  }
+
+  function setVolumeUi(card, volume, muted, fromNative) {
+    volume = Math.max(0, Math.min(100, parseInt(volume) || 0));
+    card.dataset.muted = muted ? 'true' : 'false';
+    var slider = card.querySelector('.vol-slider');
+    slider.value = volume;
+    card.querySelector('.vol-pct').textContent = volume + '%';
+    updateSlider(slider);
+    updateMuteUi(card);
+  }
+
+  function applyNativeVolume(id, volume, muted) {
+    var card = document.querySelector('[data-device-id="' + id + '"]');
+    if (!card) return;
+    setVolumeUi(card, volume, muted, true);
   }
 
   function escHtml(s) {
@@ -634,6 +700,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       id: id,
       enabled: card.querySelector('.dev-enable').checked,
       volume: parseInt(card.querySelector('.vol-slider').value),
+      muted: card.dataset.muted === 'true',
       hpf: Math.round(sliderToFreq(parseInt(card.querySelector('.hpf-slider').value))),
       lpf: Math.round(sliderToFreq(parseInt(card.querySelector('.lpf-slider').value)))
     };
@@ -655,7 +722,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   function sendUpdate(id) {
     var s = getDevState(id);
     if (!s) return;
-    sendMsg({ type: 'device_update', deviceId: s.id, enabled: s.enabled, volume: s.volume, hpf: s.hpf, lpf: s.lpf });
+    sendMsg({ type: 'device_update', deviceId: s.id, enabled: s.enabled, volume: s.volume, muted: s.muted, hpf: s.hpf, lpf: s.lpf });
   }
 
   document.getElementById('actionBtn').addEventListener('click', function() {
@@ -715,6 +782,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           break;
         case 'window_state':
           updateMaxButton(data.maximized);
+          break;
+        case 'volume_changed':
+          applyNativeVolume(data.deviceId, data.volume, data.muted);
           break;
         case 'error':
           showToast(data.message, 'error');
@@ -784,7 +854,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 
   // 鼠标按下时发起缩放或拖动
   document.addEventListener('mousedown', function(e) {
-    if (e.target.closest('input, button, label, .cb-wrap, .vol-slider, .hpf-slider, .lpf-slider')) return;
+    if (e.target.closest('input, button, label, .cb-wrap, .vol-slider, .vol-icon, .hpf-slider, .lpf-slider')) return;
     var action = hitTest(e.clientX, e.clientY);
     if (action) {
       e.preventDefault();
@@ -811,6 +881,185 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 </html>)html";
 
 // ============================================================================
+//  SystemVolumeManager
+// ============================================================================
+
+class SystemVolumeManager {
+public:
+    using Callback = std::function<void(const std::string&, int, bool)>;
+
+    SystemVolumeManager() = default;
+    ~SystemVolumeManager() { shutdown(); }
+
+    bool initialize(Callback callback) {
+        callback_ = callback;
+        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator_));
+        return SUCCEEDED(hr) && enumerator_ != nullptr;
+    }
+
+    void shutdown() {
+        for (auto& kv : watches_) {
+            EndpointWatch* watch = kv.second;
+            if (watch->endpoint && watch->callback) {
+                watch->endpoint->UnregisterControlChangeNotify(watch->callback);
+            }
+            if (watch->callback) watch->callback->Release();
+            if (watch->endpoint) watch->endpoint->Release();
+            delete watch;
+        }
+        watches_.clear();
+        if (enumerator_) {
+            enumerator_->Release();
+            enumerator_ = nullptr;
+        }
+        callback_ = nullptr;
+    }
+
+    SystemVolumeState getState(const std::string& deviceId) {
+        SystemVolumeState state;
+        IAudioEndpointVolume* endpoint = getEndpoint(deviceId);
+        if (!endpoint) return state;
+
+        float scalar = 1.0f;
+        BOOL muted = FALSE;
+        if (SUCCEEDED(endpoint->GetMasterVolumeLevelScalar(&scalar))) {
+            state.volume = ScalarToVolume(scalar);
+        }
+        if (SUCCEEDED(endpoint->GetMute(&muted))) {
+            state.muted = muted != FALSE;
+        }
+        endpoint->Release();
+        return state;
+    }
+
+    bool setState(const std::string& deviceId, int volume, bool muted) {
+        IAudioEndpointVolume* endpoint = getEndpoint(deviceId);
+        if (!endpoint) return false;
+
+        HRESULT hr1 = endpoint->SetMasterVolumeLevelScalar(VolumeToScalar(volume), &kAudioFluxVolumeContext);
+        HRESULT hr2 = endpoint->SetMute(muted ? TRUE : FALSE, &kAudioFluxVolumeContext);
+        endpoint->Release();
+        return SUCCEEDED(hr1) && SUCCEEDED(hr2);
+    }
+
+    void watchDevice(const std::string& deviceId) {
+        if (!enumerator_ || watches_.find(deviceId) != watches_.end()) return;
+
+        IAudioEndpointVolume* endpoint = getEndpoint(deviceId);
+        if (!endpoint) return;
+
+        auto* watch = new EndpointWatch();
+        watch->device_id = deviceId;
+        watch->endpoint = endpoint;
+        watch->callback = new EndpointVolumeCallback(this, deviceId);
+
+        HRESULT hr = endpoint->RegisterControlChangeNotify(watch->callback);
+        if (FAILED(hr)) {
+            watch->callback->Release();
+            endpoint->Release();
+            delete watch;
+            return;
+        }
+        watches_[deviceId] = watch;
+    }
+
+    void unwatchMissingDevices(const std::vector<DeviceInfo>& devices) {
+        std::vector<std::string> removeIds;
+        for (auto& kv : watches_) {
+            bool found = false;
+            for (auto& d : devices) {
+                if (d.id == kv.first) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) removeIds.push_back(kv.first);
+        }
+        for (auto& id : removeIds) {
+            auto it = watches_.find(id);
+            if (it == watches_.end()) continue;
+            EndpointWatch* watch = it->second;
+            if (watch->endpoint && watch->callback) {
+                watch->endpoint->UnregisterControlChangeNotify(watch->callback);
+            }
+            if (watch->callback) watch->callback->Release();
+            if (watch->endpoint) watch->endpoint->Release();
+            delete watch;
+            watches_.erase(it);
+        }
+    }
+
+private:
+    class EndpointVolumeCallback : public IAudioEndpointVolumeCallback {
+    public:
+        EndpointVolumeCallback(SystemVolumeManager* owner, const std::string& deviceId)
+            : owner_(owner), device_id_(deviceId) {}
+
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+            if (riid == __uuidof(IUnknown) || riid == __uuidof(IAudioEndpointVolumeCallback)) {
+                *ppv = static_cast<IAudioEndpointVolumeCallback*>(this);
+                AddRef();
+                return S_OK;
+            }
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+
+        ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref_); }
+        ULONG STDMETHODCALLTYPE Release() override {
+            ULONG r = InterlockedDecrement(&ref_);
+            if (r == 0) delete this;
+            return r;
+        }
+
+        HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA data) override {
+            if (!data || !owner_) return S_OK;
+            if (IsSameGuid(data->guidEventContext, kAudioFluxVolumeContext)) return S_OK;
+            owner_->notify(device_id_, ScalarToVolume(data->fMasterVolume), data->bMuted != FALSE);
+            return S_OK;
+        }
+
+    private:
+        SystemVolumeManager* owner_ = nullptr;
+        std::string device_id_;
+        ULONG ref_ = 1;
+    };
+
+    struct EndpointWatch {
+        std::string device_id;
+        IAudioEndpointVolume* endpoint = nullptr;
+        EndpointVolumeCallback* callback = nullptr;
+    };
+
+    IAudioEndpointVolume* getEndpoint(const std::string& deviceId) {
+        if (!enumerator_) return nullptr;
+
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, nullptr, 0);
+        if (wlen <= 0) return nullptr;
+        std::wstring wid(wlen, 0);
+        MultiByteToWideChar(CP_UTF8, 0, deviceId.c_str(), -1, &wid[0], wlen);
+
+        IMMDevice* device = nullptr;
+        if (FAILED(enumerator_->GetDevice(wid.c_str(), &device)) || !device) return nullptr;
+
+        IAudioEndpointVolume* endpoint = nullptr;
+        HRESULT hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                                      reinterpret_cast<void**>(&endpoint));
+        device->Release();
+        return SUCCEEDED(hr) ? endpoint : nullptr;
+    }
+
+    void notify(const std::string& deviceId, int volume, bool muted) {
+        if (callback_) callback_(deviceId, volume, muted);
+    }
+
+    IMMDeviceEnumerator* enumerator_ = nullptr;
+    std::map<std::string, EndpointWatch*> watches_;
+    Callback callback_;
+};
+
+// ============================================================================
 //  AudioEngine
 // ============================================================================
 
@@ -826,6 +1075,10 @@ class AudioEngine {
 public:
     AudioEngine() = default;
     ~AudioEngine() { stop(); }
+
+    void setVolumeManager(SystemVolumeManager* volumeManager) {
+        volumeManager_ = volumeManager;
+    }
 
     bool start(const std::vector<DeviceConfig>& devices) {
         if (running_) stop();
@@ -853,7 +1106,7 @@ public:
         int ok = 0;
         for (auto& dc : devices) {
             if (dc.enabled) {
-                if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, dc.volume))
+                if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, 100))
                     ++ok;
             }
         }
@@ -938,12 +1191,19 @@ public:
                     props->Release();
                 }
                 info.is_default = (info.id == default_id);
+                if (volumeManager_) {
+                    SystemVolumeState volumeState = volumeManager_->getState(info.id);
+                    info.volume = volumeState.volume;
+                    info.muted = volumeState.muted;
+                    volumeManager_->watchDevice(info.id);
+                }
                 devices.push_back(info);
                 device->Release();
             }
             collection->Release();
         }
         enumerator->Release();
+        if (volumeManager_) volumeManager_->unwatchMissingDevices(devices);
         return devices;
     }
 
@@ -952,9 +1212,10 @@ public:
 private:
     SharedAudioBuffer* buffer_ = nullptr;
     WasapiCapture*     capture_ = nullptr;
-    WasapiOutput*      output_ = nullptr;
+    WasapiOutput* output_ = nullptr;
     bool running_ = false;
     std::vector<DeviceConfig> configs_;
+    SystemVolumeManager* volumeManager_ = nullptr;
 };
 
 // ============================================================================
@@ -1071,6 +1332,15 @@ public:
             x, y, winW, winH, nullptr, nullptr, hInst, this);
         if (!hwnd_) return false;
 
+        engine_.setVolumeManager(&volumeManager_);
+        volumeManager_.initialize([this](const std::string& deviceId, int volume, bool muted) {
+            auto* event = new VolumeChangedEvent();
+            event->device_id = deviceId;
+            event->volume = volume;
+            event->muted = muted;
+            PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event));
+        });
+
         // 标准无边框窗口做法：保留系统阴影和 Aero Snap，但不把 DWM frame 扩进客户区
         BOOL darkMode = TRUE;
         DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
@@ -1108,6 +1378,7 @@ private:
     EventRegistrationToken msgToken_ = {};
     HMODULE wv2Dll_ = nullptr;
     AudioEngine engine_;
+    SystemVolumeManager volumeManager_;
 
     bool initWebView() {
         // Load WebView2Loader.dll dynamically
@@ -1264,7 +1535,11 @@ private:
             float hpf = (float)msg["hpf"].asNumber();
             float lpf = (float)msg["lpf"].asNumber();
             int vol = msg["volume"].asInt();
-            engine_.updateDevice(devId, hpf, lpf, vol);
+            bool muted = msg["muted"].asBool();
+            if (!volumeManager_.setState(devId, vol, muted)) {
+                sendMessage("{\"type\":\"error\",\"message\":\"系统音量设置失败\"}");
+            }
+            engine_.updateDevice(devId, hpf, lpf, 100);
         }
         else if (type == "window_control") {
             std::string action = msg["action"].asString();
@@ -1303,7 +1578,9 @@ private:
             if (i > 0) json += ",";
             json += "{\"id\":\"" + EscapeJson(devs[i].id) +
                     "\",\"name\":\"" + EscapeJson(devs[i].name) +
-                    "\",\"isDefault\":" + (devs[i].is_default ? "true" : "false") + "}";
+                    "\",\"isDefault\":" + (devs[i].is_default ? "true" : "false") +
+                    ",\"volume\":" + std::to_string(ClampVolume(devs[i].volume)) +
+                    ",\"muted\":" + (devs[i].muted ? "true" : "false") + "}";
         }
         json += "]}";
 
@@ -1324,6 +1601,16 @@ private:
         executeScript(script);
     }
 
+    void sendVolumeUpdate(const std::string& deviceId, int volume, bool muted) {
+        std::string json = "{\"type\":\"volume_changed\",\"deviceId\":\"" + EscapeJson(deviceId) +
+                           "\",\"volume\":" + std::to_string(ClampVolume(volume)) +
+                           ",\"muted\":" + (muted ? "true" : "false") + "}";
+        sendMessage(json);
+        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
+                            + Utf8ToWide(json) + L");}";
+        executeScript(script);
+    }
+
     void sendMessage(const std::string& json) {
         if (!webView_) return;
         std::wstring wjson = Utf8ToWide(json);
@@ -1337,6 +1624,7 @@ private:
     }
 
     void cleanup() {
+        volumeManager_.shutdown();
         engine_.stop();
         if (webView_ && msgToken_.value != 0) {
             webView_->remove_WebMessageReceived(msgToken_);
@@ -1387,6 +1675,16 @@ private:
             FillRect(reinterpret_cast<HDC>(wParam), &rc, brush);
             DeleteObject(brush);
             return 1;
+        }
+
+        case WM_APP_VOLUME_CHANGED: {
+            if (!app) break;
+            auto* event = reinterpret_cast<VolumeChangedEvent*>(lParam);
+            if (event) {
+                app->sendVolumeUpdate(event->device_id, event->volume, event->muted);
+                delete event;
+            }
+            return 0;
         }
 
         case WM_SIZE: {

@@ -19,6 +19,8 @@ struct DeviceInfo {
     std::string id;
     std::string name;
     bool is_default;
+    int volume = 100;
+    bool muted = false;
 };
 
 /**
