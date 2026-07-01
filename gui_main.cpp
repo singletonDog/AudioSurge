@@ -25,6 +25,12 @@
 #ifndef DWMWA_CAPTION_COLOR
 #define DWMWA_CAPTION_COLOR 35
 #endif
+#ifndef DWMWA_WINDOW_CORNER_PREFERENCE
+#define DWMWA_WINDOW_CORNER_PREFERENCE 33
+#endif
+#ifndef DWMWCP_ROUND
+#define DWMWCP_ROUND 2
+#endif
 
 static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
 
@@ -256,8 +262,10 @@ static const char* kHtmlContent = R"html(<!DOCTYPE html>
   --radius-md:14px;
   --radius-sm:8px;
 }
-html,body{height:100%;overflow:hidden;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--text);background:#12122b}
+html,body{height:100%;overflow:hidden;font-family:'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--text);background:transparent}
 body{
+  border-radius:var(--radius-lg);
+  overflow:hidden;
   background:
     radial-gradient(ellipse at 15% 20%, rgba(109,59,255,0.18) 0%, transparent 50%),
     radial-gradient(ellipse at 85% 80%, rgba(157,114,255,0.12) 0%, transparent 45%),
@@ -266,6 +274,7 @@ body{
 }
 body::before{
   content:'';position:fixed;inset:0;pointer-events:none;
+  border-radius:inherit;
   background-image:
     linear-gradient(120deg, rgba(109,59,255,0.04) 0%, transparent 40%),
     linear-gradient(240deg, rgba(157,114,255,0.03) 0%, transparent 40%);
@@ -1069,6 +1078,8 @@ public:
         DwmSetWindowAttribute(hwnd_, DWMWA_CAPTION_COLOR, &captionColor, sizeof(captionColor));
         COLORREF borderColor = kWindowBgColor;
         DwmSetWindowAttribute(hwnd_, DWMWA_BORDER_COLOR, &borderColor, sizeof(borderColor));
+        int cornerPreference = DWMWCP_ROUND;
+        DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPreference, sizeof(cornerPreference));
         MARGINS margins = { 0, 0, 0, 0 };
         DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
@@ -1146,7 +1157,7 @@ private:
 
                             ICoreWebView2Controller2* controller2 = nullptr;
                             if (SUCCEEDED(ctrl->QueryInterface(IID_ICoreWebView2Controller2, reinterpret_cast<void**>(&controller2))) && controller2) {
-                                COREWEBVIEW2_COLOR bg = { 255, 18, 18, 43 };
+                                COREWEBVIEW2_COLOR bg = { 0, 0, 0, 0 };
                                 controller2->put_DefaultBackgroundColor(bg);
                                 controller2->Release();
                             }
