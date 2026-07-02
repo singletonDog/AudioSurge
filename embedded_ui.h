@@ -122,9 +122,11 @@ body::before{
   background:radial-gradient(circle at 30% 30%, #3a355e 0%, #252342 60%, #1a1832 100%);
   border:1px solid rgba(157,114,255,0.2);
   display:flex;align-items:center;justify-content:center;font-size:20px;
-  color:var(--accent2);flex-shrink:0;
+  color:var(--accent2);flex-shrink:0;cursor:pointer;user-select:none;
   box-shadow:inset 0 2px 4px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.25);
+  transition:transform 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
+.dev-icon:hover{transform:scale(1.06);border-color:rgba(157,114,255,0.55);box-shadow:inset 0 2px 4px rgba(0,0,0,0.4), 0 0 14px rgba(157,114,255,0.24)}
 
 /* Device Info */
 .dev-info{flex:0 1 auto;min-width:0;max-width:240px}
@@ -416,6 +418,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           sendUpdate(dev.id);
         });
       }
+      card.querySelector('.dev-icon').addEventListener('dblclick', function() {
+        if (dev.isDefault) {
+          showToast('该设备已经是默认捕获源', 'info');
+          return;
+        }
+        sendMsg({ type: 'set_default_device', deviceId: dev.id, name: dev.name });
+      });
       card.querySelector('.vol-icon').addEventListener('click', function() {
         setVolumeUi(card, parseInt(card.querySelector('.vol-slider').value), !(card.dataset.muted === 'true'), false);
         sendUpdate(dev.id);
@@ -650,7 +659,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 
   // 鼠标按下时发起缩放或拖动
   document.addEventListener('mousedown', function(e) {
-    if (e.target.closest('input, button, label, .cb-wrap, .vol-slider, .vol-icon, .hpf-slider, .lpf-slider')) return;
+    if (e.target.closest('input, button, label, .cb-wrap, .dev-icon, .vol-slider, .vol-icon, .hpf-slider, .lpf-slider')) return;
     var action = hitTest(e.clientX, e.clientY);
     if (action) {
       e.preventDefault();

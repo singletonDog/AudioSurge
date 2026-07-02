@@ -569,11 +569,9 @@ private:
             DeviceConfig dc;
             dc.id = msg["deviceId"].asString();
             dc.name = msg["name"].asString();
-            std::string defaultDeviceId = GetDefaultRenderDeviceId();
-            bool isDefaultDevice = dc.id == defaultDeviceId;
-            dc.enabled = !isDefaultDevice && msg["enabled"].asBool();
-            dc.hpf_hz = isDefaultDevice ? 0.0f : (float)msg["hpf"].asNumber();
-            dc.lpf_hz = isDefaultDevice ? 0.0f : (float)msg["lpf"].asNumber();
+            dc.enabled = msg["enabled"].asBool();
+            dc.hpf_hz = (float)msg["hpf"].asNumber();
+            dc.lpf_hz = (float)msg["lpf"].asNumber();
             dc.volume = msg["volume"].asInt();
             bool muted = msg["muted"].asBool();
             if (!volumeManager_.setState(dc.id, dc.volume, muted)) {
@@ -587,6 +585,18 @@ private:
                 showInfo(DeviceLabel(dc.name, dc.id) + " 已启用");
             } else if (result.device_stopped) {
                 showInfo(DeviceLabel(dc.name, dc.id) + " 已停止");
+            }
+        }
+        else if (type == "set_default_device") {
+            std::string deviceId = msg["deviceId"].asString();
+            std::string name = msg["name"].asString();
+            std::string error;
+            if (!SetDefaultRenderDevice(deviceId, &error)) {
+                sendError(error.empty() ? "切换默认输出设备失败" : error);
+            } else {
+                showInfo(DeviceLabel(name, deviceId) + " 已设为默认输出设备");
+                auto devs = engine_.enumerateDevices();
+                sendDeviceList(devs, true);
             }
         }
         else if (type == "window_control") {

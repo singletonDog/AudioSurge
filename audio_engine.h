@@ -40,6 +40,7 @@ public:
 
 private:
     std::vector<DeviceConfig>::iterator findConfig(const std::string& id);
+    bool startRuntime(const std::vector<DeviceConfig>& devices, bool allowNoOutputs);
     void stopRuntime(bool clearConfigs);
 
     SharedAudioBuffer* buffer_ = nullptr;

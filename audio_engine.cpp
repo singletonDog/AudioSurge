@@ -16,6 +16,10 @@ void AudioEngine::setVolumeManager(SystemVolumeManager* volumeManager) {
 }
 
 bool AudioEngine::start(const std::vector<DeviceConfig>& devices) {
+    return startRuntime(devices, false);
+}
+
+bool AudioEngine::startRuntime(const std::vector<DeviceConfig>& devices, bool allowNoOutputs) {
     if (running_) stop();
     last_error_.clear();
 
@@ -63,13 +67,16 @@ bool AudioEngine::start(const std::vector<DeviceConfig>& devices) {
     if (!errors.empty()) {
         last_error_ = errors.front();
     }
-    if (ok == 0) {
+    if (ok == 0 && !allowNoOutputs) {
         if (last_error_.empty()) last_error_ = "没有可用的输出设备启动成功";
         capture_->stop();
         delete output_; output_ = nullptr;
         delete capture_; capture_ = nullptr;
         delete buffer_; buffer_ = nullptr;
         return false;
+    }
+    if (ok == 0) {
+        last_error_.clear();
     }
     running_ = true;
     configs_ = sanitized;
@@ -95,7 +102,10 @@ RuntimeUpdateResult AudioEngine::updateDevice(const DeviceConfig& config) {
         return result;
     }
 
-    if (config.enabled) {
+    bool isDefault = config.id == GetDefaultRenderDeviceId();
+    bool shouldEnable = config.enabled && !isDefault;
+
+    if (shouldEnable) {
         if (wasEnabled && output_->isDeviceRunning(config.id)) {
             output_->updateDevice(config.id, config.hpf_hz, config.lpf_hz, 100);
         } else if (output_->startDevice(config.id, config.hpf_hz, config.lpf_hz, 100)) {
@@ -127,7 +137,7 @@ bool AudioEngine::restartForDefaultDeviceChange() {
     if (!running_) return true;
     std::vector<DeviceConfig> saved = configs_;
     stopRuntime(false);
-    return start(saved);
+    return startRuntime(saved, true);
 }
 
 std::vector<DeviceInfo> AudioEngine::enumerateDevices() {
