@@ -10,6 +10,7 @@
 #include <objbase.h>
 #include <utility>
 #include "app_common.h"
+#include "audio_devices.h"
 #include "audio_engine.h"
 #include "embedded_ui.h"
 
@@ -540,15 +541,16 @@ private:
         }
         else if (type == "start") {
             std::vector<DeviceConfig> configs;
+            std::string defaultDeviceId = GetDefaultRenderDeviceId();
             auto& arr = msg["devices"].asArray();
             for (size_t i = 0; i < arr.size(); ++i) {
                 auto& d = arr[i];
                 DeviceConfig dc;
                 dc.id = d["id"].asString();
                 dc.name = d["name"].asString();
-                dc.enabled = d["enabled"].asBool();
-                dc.hpf_hz = (float)d["hpf"].asNumber();
-                dc.lpf_hz = (float)d["lpf"].asNumber();
+                dc.enabled = dc.id != defaultDeviceId && d["enabled"].asBool();
+                dc.hpf_hz = dc.id == defaultDeviceId ? 0.0f : (float)d["hpf"].asNumber();
+                dc.lpf_hz = dc.id == defaultDeviceId ? 0.0f : (float)d["lpf"].asNumber();
                 dc.volume = d["volume"].asInt();
                 configs.push_back(dc);
             }
@@ -567,9 +569,11 @@ private:
             DeviceConfig dc;
             dc.id = msg["deviceId"].asString();
             dc.name = msg["name"].asString();
-            dc.enabled = msg["enabled"].asBool();
-            dc.hpf_hz = (float)msg["hpf"].asNumber();
-            dc.lpf_hz = (float)msg["lpf"].asNumber();
+            std::string defaultDeviceId = GetDefaultRenderDeviceId();
+            bool isDefaultDevice = dc.id == defaultDeviceId;
+            dc.enabled = !isDefaultDevice && msg["enabled"].asBool();
+            dc.hpf_hz = isDefaultDevice ? 0.0f : (float)msg["hpf"].asNumber();
+            dc.lpf_hz = isDefaultDevice ? 0.0f : (float)msg["lpf"].asNumber();
             dc.volume = msg["volume"].asInt();
             bool muted = msg["muted"].asBool();
             if (!volumeManager_.setState(dc.id, dc.volume, muted)) {

@@ -313,25 +313,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var volume = typeof dev.volume === 'number' ? dev.volume : 100;
       var muted = !!dev.muted;
       var prev = previous[dev.id];
-      var enabled = prev ? prev.enabled : !dev.isDefault;
-      var hpfPos = prev ? freqToSlider(prev.hpf) : 0;
-      var lpfPos = prev ? freqToSlider(prev.lpf) : 0;
+      var enabled = dev.isDefault ? false : (prev ? prev.enabled : true);
+      var hpfPos = !dev.isDefault && prev ? freqToSlider(prev.hpf) : 0;
+      var lpfPos = !dev.isDefault && prev ? freqToSlider(prev.lpf) : 0;
       card.dataset.muted = muted ? 'true' : 'false';
       var statusText = dev.isDefault ? '默认捕获源' : '已连接';
-      card.innerHTML =
-        '<div class="card-header">' +
-          '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>' +
-          '<div class="dev-icon">&#128266;</div>' +
-          '<div class="dev-info">' +
-            '<div class="dev-name">' + escHtml(dev.name) + '</div>' +
-            '<div class="dev-status"><span class="status-dot"></span><span>' + statusText + '</span></div>' +
-          '</div>' +
-          '<div class="vol-area">' +
-            '<span class="vol-icon">&#128266;</span>' +
-            '<input type="range" class="vol-slider slider-main" min="0" max="100" value="' + volume + '">' +
-            '<span class="vol-pct">' + volume + '%</span>' +
-          '</div>' +
-        '</div>' +
+      var enableHtml = dev.isDefault ? '' : '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>';
+      var filterHtml = dev.isDefault ? '' :
         '<div class="filter-row">' +
           '<div class="filter-head">' +
             '<div class="filter-title">高通滤波器<span class="abbr">(HPF)</span></div>' +
@@ -360,56 +348,74 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
             '<span class="slider-label right">20kHz</span>' +
           '</div>' +
         '</div>';
+      card.innerHTML =
+        '<div class="card-header">' +
+          enableHtml +
+          '<div class="dev-icon">&#128266;</div>' +
+          '<div class="dev-info">' +
+            '<div class="dev-name">' + escHtml(dev.name) + '</div>' +
+            '<div class="dev-status"><span class="status-dot"></span><span>' + statusText + '</span></div>' +
+          '</div>' +
+          '<div class="vol-area">' +
+            '<span class="vol-icon">&#128266;</span>' +
+            '<input type="range" class="vol-slider slider-main" min="0" max="100" value="' + volume + '">' +
+            '<span class="vol-pct">' + volume + '%</span>' +
+          '</div>' +
+        '</div>' + filterHtml;
       c.appendChild(card);
 
       var volSlider = card.querySelector('.vol-slider');
       var hpfSlider = card.querySelector('.hpf-slider');
       var lpfSlider = card.querySelector('.lpf-slider');
       updateSlider(volSlider);
-      updateSlider(hpfSlider);
-      updateSlider(lpfSlider);
+      if (hpfSlider) updateSlider(hpfSlider);
+      if (lpfSlider) updateSlider(lpfSlider);
       updateMuteUi(card);
 
       volSlider.addEventListener('input', function() {
         setVolumeUi(card, parseInt(this.value), card.dataset.muted === 'true', false);
         sendUpdateDebounced(dev.id);
       });
-      hpfSlider.addEventListener('input', function() {
-        var f = sliderToFreq(parseInt(this.value));
-        var el = card.querySelector('.hpf-val');
-        var under = card.querySelector('.hpf-under');
-        el.textContent = fmtFreq(f);
-        el.className = 'filter-state hpf-val' + (f > 0 ? '' : ' off');
-        if (f > 0) {
-          under.textContent = fmtFreq(f);
-          under.style.opacity = '1';
-        } else {
-          under.style.opacity = '0';
-        }
-        updateSlider(this);
-        sendUpdateDebounced(dev.id);
-      });
-      lpfSlider.addEventListener('input', function() {
-        var f = sliderToFreq(parseInt(this.value));
-        var el = card.querySelector('.lpf-val');
-        var under = card.querySelector('.lpf-under');
-        el.textContent = fmtFreq(f);
-        el.className = 'filter-state lpf-val' + (f > 0 ? '' : ' off');
-        if (f > 0) {
-          under.textContent = fmtFreq(f);
-          under.style.opacity = '1';
-        } else {
-          under.style.opacity = '0';
-        }
-        updateSlider(this);
-        sendUpdateDebounced(dev.id);
-      });
-      card.querySelector('.dev-enable').addEventListener('change', function() {
-        if (this.checked && dev.isDefault) {
-          showToast('警告：当前默认输出设备也是捕获源，启用可能产生反馈啸叫！', 'error');
-        }
-        sendUpdate(dev.id);
-      });
+      if (hpfSlider) {
+        hpfSlider.addEventListener('input', function() {
+          var f = sliderToFreq(parseInt(this.value));
+          var el = card.querySelector('.hpf-val');
+          var under = card.querySelector('.hpf-under');
+          el.textContent = fmtFreq(f);
+          el.className = 'filter-state hpf-val' + (f > 0 ? '' : ' off');
+          if (f > 0) {
+            under.textContent = fmtFreq(f);
+            under.style.opacity = '1';
+          } else {
+            under.style.opacity = '0';
+          }
+          updateSlider(this);
+          sendUpdateDebounced(dev.id);
+        });
+      }
+      if (lpfSlider) {
+        lpfSlider.addEventListener('input', function() {
+          var f = sliderToFreq(parseInt(this.value));
+          var el = card.querySelector('.lpf-val');
+          var under = card.querySelector('.lpf-under');
+          el.textContent = fmtFreq(f);
+          el.className = 'filter-state lpf-val' + (f > 0 ? '' : ' off');
+          if (f > 0) {
+            under.textContent = fmtFreq(f);
+            under.style.opacity = '1';
+          } else {
+            under.style.opacity = '0';
+          }
+          updateSlider(this);
+          sendUpdateDebounced(dev.id);
+        });
+      }
+      var enableBox = card.querySelector('.dev-enable');
+      if (enableBox) {
+        enableBox.addEventListener('change', function() {
+          sendUpdate(dev.id);
+        });
+      }
       card.querySelector('.vol-icon').addEventListener('click', function() {
         setVolumeUi(card, parseInt(card.querySelector('.vol-slider').value), !(card.dataset.muted === 'true'), false);
         sendUpdate(dev.id);
@@ -444,7 +450,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   function applyDeviceEnabled(id, enabled) {
     var card = document.querySelector('[data-device-id="' + id + '"]');
     if (!card) return;
-    card.querySelector('.dev-enable').checked = !!enabled;
+    var enableBox = card.querySelector('.dev-enable');
+    if (!enableBox) return;
+    enableBox.checked = !!enabled;
   }
 
   function setRefreshState(refreshing) {
@@ -462,14 +470,18 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     var card = document.querySelector('[data-device-id="' + id + '"]');
     if (!card) return null;
     var dev = devices.find(function(d) { return d.id === id; }) || {};
+    var isDefault = !!dev.isDefault;
+    var enableBox = card.querySelector('.dev-enable');
+    var hpfSlider = card.querySelector('.hpf-slider');
+    var lpfSlider = card.querySelector('.lpf-slider');
     return {
       id: id,
       name: dev.name || card.querySelector('.dev-name').textContent,
-      enabled: card.querySelector('.dev-enable').checked,
+      enabled: isDefault ? false : !!(enableBox && enableBox.checked),
       volume: parseInt(card.querySelector('.vol-slider').value),
       muted: card.dataset.muted === 'true',
-      hpf: Math.round(sliderToFreq(parseInt(card.querySelector('.hpf-slider').value))),
-      lpf: Math.round(sliderToFreq(parseInt(card.querySelector('.lpf-slider').value)))
+      hpf: isDefault || !hpfSlider ? 0 : Math.round(sliderToFreq(parseInt(hpfSlider.value))),
+      lpf: isDefault || !lpfSlider ? 0 : Math.round(sliderToFreq(parseInt(lpfSlider.value)))
     };
   }
 

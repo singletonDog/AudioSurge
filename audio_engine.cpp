@@ -43,7 +43,15 @@ bool AudioEngine::start(const std::vector<DeviceConfig>& devices) {
 
     int ok = 0;
     std::vector<std::string> errors;
-    for (auto& dc : devices) {
+    std::string defaultDeviceId = GetDefaultRenderDeviceId();
+    std::vector<DeviceConfig> sanitized = devices;
+    for (auto& dc : sanitized) {
+        if (dc.id == defaultDeviceId) {
+            dc.enabled = false;
+            dc.hpf_hz = 0;
+            dc.lpf_hz = 0;
+            continue;
+        }
         if (dc.enabled) {
             if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, 100)) {
                 ++ok;
@@ -64,7 +72,7 @@ bool AudioEngine::start(const std::vector<DeviceConfig>& devices) {
         return false;
     }
     running_ = true;
-    configs_ = devices;
+    configs_ = sanitized;
     return true;
 }
 
