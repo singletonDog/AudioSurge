@@ -169,12 +169,16 @@ input[type=range]:disabled{cursor:not-allowed}
 input[type=range]:disabled::-webkit-slider-thumb{background:var(--text3);box-shadow:0 0 0 2px #5a5875, 0 1px 3px rgba(0,0,0,0.3);opacity:0.65}
 input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opacity:0.6}
 
-/* Bottom Bar */
-.bottom-bar{flex-shrink:0;padding:20px 32px 28px;display:flex;flex-direction:column;align-items:center;gap:12px}
-.utility-row{display:flex;align-items:center;gap:12px}
-.refresh-btn{padding:8px 16px;border:1px solid rgba(109,59,255,0.35);border-radius:12px;background:rgba(37,37,73,0.72);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s}
-.refresh-btn:hover{border-color:rgba(157,114,255,0.65);color:#fff;background:rgba(109,59,255,0.24)}
-.refresh-btn:disabled{opacity:0.55;cursor:not-allowed}
+.bottom-bar{flex-shrink:0;padding:20px 32px 28px;display:flex;flex-direction:column;align-items:center;gap:12px;position:relative}
+.corner-btn{position:absolute;bottom:28px;width:44px;height:44px;border:1px solid rgba(109,59,255,0.35);border-radius:14px;background:rgba(37,37,73,0.72);color:var(--text2);font-size:20px;font-weight:600;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)}
+.corner-btn:hover{border-color:rgba(157,114,255,0.65);color:#fff;background:rgba(109,59,255,0.24);transform:translateY(-1px)}
+.corner-btn:disabled{opacity:0.55;cursor:not-allowed;transform:none}
+.settings-btn{left:32px;cursor:default}
+.settings-btn:hover{color:var(--text2);background:rgba(37,37,73,0.72);border-color:rgba(109,59,255,0.35);transform:none}
+.refresh-btn{right:32px}
+.refresh-icon{display:inline-block;line-height:1}
+.refresh-btn.refreshing .refresh-icon{animation:spin 0.8s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .action-btn{
   min-width:340px;padding:16px 32px;border:none;border-radius:18px;
   font-size:17px;font-weight:700;cursor:pointer;transition:all 0.2s;
@@ -236,14 +240,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     </div>
   </main>
   <div class="bottom-bar">
-    <div class="utility-row">
-      <button class="refresh-btn" id="refreshBtn">刷新设备</button>
-    </div>
+    <button class="corner-btn settings-btn" id="settingsBtn" title="设置（暂未开放）" aria-label="设置（暂未开放）">&#9881;</button>
     <button class="action-btn start" id="actionBtn">&#9654; 启动 AudioFlux</button>
     <div class="status-row">
       <span class="status-dot-small stopped" id="statusDot"></span>
       <span class="status-text stopped" id="statusText">已停止</span>
     </div>
+    <button class="corner-btn refresh-btn" id="refreshBtn" title="刷新设备" aria-label="刷新设备"><span class="refresh-icon">&#8635;</span></button>
   </div>
 </div>
 <script>
@@ -468,7 +471,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     var btn = document.getElementById('refreshBtn');
     if (!btn) return;
     btn.disabled = !!refreshing;
-    btn.textContent = refreshing ? '刷新中...' : '刷新设备';
+    btn.title = refreshing ? '刷新中...' : '刷新设备';
+    btn.setAttribute('aria-label', btn.title);
+    btn.className = 'corner-btn refresh-btn' + (refreshing ? ' refreshing' : '');
   }
 
   function escHtml(s) {
