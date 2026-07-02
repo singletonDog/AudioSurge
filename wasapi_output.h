@@ -42,6 +42,9 @@ public:
     // volume: 0-100
     bool startDevice(const std::string& device_id,
                      float hpf_hz, float lpf_hz, int volume);
+    bool stopDevice(const std::string& device_id);
+    bool isDeviceRunning(const std::string& device_id) const;
+    const std::string& getLastError() const { return last_error_; }
 
     // 运行时更新单个设备参数（线程安全，渲染线程自动检测变化并重算系数）
     void updateDevice(const std::string& device_id,
@@ -70,6 +73,7 @@ private:
         IAudioRenderClient* render_client = nullptr;
         HANDLE event = nullptr;
         std::thread thread;
+        std::atomic<bool> running{false};
         size_t read_pos = 0;
         UINT32 buffer_frames = 0;
 
@@ -94,6 +98,7 @@ private:
     SharedAudioBuffer& buffer_;
     std::vector<RenderStream*> streams_;
     IMMDeviceEnumerator* enumerator_ = nullptr;
+    std::string last_error_;
     int sample_rate_ = 44100;
     int channels_ = 2;
     std::atomic<bool> running_{false};

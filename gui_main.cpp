@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <sstream>
 #include <objbase.h>
+#include <utility>
 #include "ring_buffer.h"
 #include "wasapi_capture.h"
 #include "wasapi_output.h"
@@ -36,6 +37,7 @@
 
 static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
 static constexpr UINT WM_APP_VOLUME_CHANGED = WM_APP + 1;
+static constexpr UINT WM_APP_DEFAULT_DEVICE_CHANGED = WM_APP + 2;
 
 // PKEY_Device_FriendlyName - 避免依赖 functiondiscoverykeys_devpkey.h
 static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
@@ -105,6 +107,55 @@ struct VolumeChangedEvent {
     std::string device_id;
     int volume = 100;
     bool muted = false;
+};
+
+struct RuntimeUpdateResult {
+    bool ok = true;
+    bool device_started = false;
+    bool device_stopped = false;
+    std::string error;
+};
+
+static std::string DeviceLabel(const std::string& name, const std::string& id) {
+    return name.empty() ? id : name;
+}
+
+class DefaultDeviceNotificationClient : public IMMNotificationClient {
+public:
+    using Callback = std::function<void()>;
+
+    explicit DefaultDeviceNotificationClient(Callback cb) : callback_(std::move(cb)) {}
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IMMNotificationClient)) {
+            *ppv = static_cast<IMMNotificationClient*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref_); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG r = InterlockedDecrement(&ref_);
+        if (r == 0) delete this;
+        return r;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
+
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override {
+        if (flow == eRender && role == eConsole && callback_) callback_();
+        return S_OK;
+    }
+
+private:
+    Callback callback_;
+    ULONG ref_ = 1;
 };
 
 // ============================================================================
@@ -435,6 +486,10 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 
 /* Bottom Bar */
 .bottom-bar{flex-shrink:0;padding:20px 32px 28px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.utility-row{display:flex;align-items:center;gap:12px}
+.refresh-btn{padding:8px 16px;border:1px solid rgba(109,59,255,0.35);border-radius:12px;background:rgba(37,37,73,0.72);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;transition:all 0.15s}
+.refresh-btn:hover{border-color:rgba(157,114,255,0.65);color:#fff;background:rgba(109,59,255,0.24)}
+.refresh-btn:disabled{opacity:0.55;cursor:not-allowed}
 .action-btn{
   min-width:340px;padding:16px 32px;border:none;border-radius:18px;
   font-size:17px;font-weight:700;cursor:pointer;transition:all 0.2s;
@@ -496,6 +551,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     </div>
   </main>
   <div class="bottom-bar">
+    <div class="utility-row">
+      <button class="refresh-btn" id="refreshBtn">刷新设备</button>
+    </div>
     <button class="action-btn start" id="actionBtn">&#9654; 启动 AudioFlux</button>
     <div class="status-row">
       <span class="status-dot-small stopped" id="statusDot"></span>
@@ -507,6 +565,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 (function(){
   var isRunning = false;
   var devices = [];
+  var stateById = {};
 
   // 滑块位置 (1-100) 映射到频率 (20Hz-20kHz)，对数刻度；0=关闭
   function sliderToFreq(pos) {
@@ -551,7 +610,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   }
 
   function renderDevices(list) {
+    var previous = {};
+    devices.forEach(function(d) {
+      var s = getDevState(d.id);
+      if (s) previous[d.id] = s;
+    });
     devices = list;
+    stateById = {};
     var c = document.getElementById('deviceContainer');
     c.innerHTML = '';
     if (!list || list.length === 0) {
@@ -564,11 +629,15 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       card.dataset.deviceId = dev.id;
       var volume = typeof dev.volume === 'number' ? dev.volume : 100;
       var muted = !!dev.muted;
+      var prev = previous[dev.id];
+      var enabled = prev ? prev.enabled : !dev.isDefault;
+      var hpfPos = prev ? freqToSlider(prev.hpf) : 0;
+      var lpfPos = prev ? freqToSlider(prev.lpf) : 0;
       card.dataset.muted = muted ? 'true' : 'false';
-      var statusText = dev.isDefault ? '默认设备' : '已连接';
+      var statusText = dev.isDefault ? '默认捕获源' : '已连接';
       card.innerHTML =
         '<div class="card-header">' +
-          '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (dev.isDefault ? '' : 'checked') + '><span class="cb-custom"></span></label>' +
+          '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>' +
           '<div class="dev-icon">&#128266;</div>' +
           '<div class="dev-info">' +
             '<div class="dev-name">' + escHtml(dev.name) + '</div>' +
@@ -588,7 +657,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           '<div class="slider-wrap">' +
             '<span class="slider-label">20Hz</span>' +
             '<div class="slider-main">' +
-              '<input type="range" class="hpf-slider" min="0" max="100" value="0" data-label-target="hpf-under">' +
+              '<input type="range" class="hpf-slider" min="0" max="100" value="' + hpfPos + '" data-label-target="hpf-under">' +
               '<span class="slider-value-below hpf-under" style="left:0%;opacity:0">0Hz</span>' +
             '</div>' +
             '<span class="slider-label right">20kHz</span>' +
@@ -602,7 +671,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           '<div class="slider-wrap">' +
             '<span class="slider-label">20Hz</span>' +
             '<div class="slider-main">' +
-              '<input type="range" class="lpf-slider" min="0" max="100" value="0" data-label-target="lpf-under">' +
+              '<input type="range" class="lpf-slider" min="0" max="100" value="' + lpfPos + '" data-label-target="lpf-under">' +
               '<span class="slider-value-below lpf-under" style="left:0%;opacity:0">0Hz</span>' +
             '</div>' +
             '<span class="slider-label right">20kHz</span>' +
@@ -654,7 +723,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       });
       card.querySelector('.dev-enable').addEventListener('change', function() {
         if (this.checked && dev.isDefault) {
-          showToast('警告：默认输出设备是音频捕获源，启用可能产生反馈啸叫！', 'error');
+          showToast('警告：当前默认输出设备也是捕获源，启用可能产生反馈啸叫！', 'error');
         }
         sendUpdate(dev.id);
       });
@@ -689,6 +758,19 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     setVolumeUi(card, volume, muted, true);
   }
 
+  function applyDeviceEnabled(id, enabled) {
+    var card = document.querySelector('[data-device-id="' + id + '"]');
+    if (!card) return;
+    card.querySelector('.dev-enable').checked = !!enabled;
+  }
+
+  function setRefreshState(refreshing) {
+    var btn = document.getElementById('refreshBtn');
+    if (!btn) return;
+    btn.disabled = !!refreshing;
+    btn.textContent = refreshing ? '刷新中...' : '刷新设备';
+  }
+
   function escHtml(s) {
     var d = document.createElement('div'); d.textContent = s; return d.innerHTML;
   }
@@ -696,8 +778,10 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   function getDevState(id) {
     var card = document.querySelector('[data-device-id="' + id + '"]');
     if (!card) return null;
+    var dev = devices.find(function(d) { return d.id === id; }) || {};
     return {
       id: id,
+      name: dev.name || card.querySelector('.dev-name').textContent,
       enabled: card.querySelector('.dev-enable').checked,
       volume: parseInt(card.querySelector('.vol-slider').value),
       muted: card.dataset.muted === 'true',
@@ -722,8 +806,17 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   function sendUpdate(id) {
     var s = getDevState(id);
     if (!s) return;
-    sendMsg({ type: 'device_update', deviceId: s.id, enabled: s.enabled, volume: s.volume, muted: s.muted, hpf: s.hpf, lpf: s.lpf });
+    sendMsg({ type: 'device_update', deviceId: s.id, name: s.name, enabled: s.enabled, volume: s.volume, muted: s.muted, hpf: s.hpf, lpf: s.lpf });
   }
+
+  function refreshDevices(silent) {
+    setRefreshState(!silent);
+    sendMsg({ type: 'refresh_devices', silent: !!silent });
+  }
+
+  document.getElementById('refreshBtn').addEventListener('click', function() {
+    refreshDevices(false);
+  });
 
   document.getElementById('actionBtn').addEventListener('click', function() {
     if (isRunning) {
@@ -776,6 +869,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       switch (data.type) {
         case 'device_list':
           renderDevices(data.devices);
+          setRefreshState(false);
+          if (!data.silent) showToast('设备列表已刷新', 'info');
           break;
         case 'status':
           updateStatus(data.running);
@@ -785,6 +880,12 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           break;
         case 'volume_changed':
           applyNativeVolume(data.deviceId, data.volume, data.muted);
+          break;
+        case 'device_enabled':
+          applyDeviceEnabled(data.deviceId, data.enabled);
+          break;
+        case 'info':
+          showToast(data.message || '', 'info');
           break;
         case 'error':
           showToast(data.message, 'error');
@@ -873,7 +974,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 
   // 延迟发送 refresh_devices，确保页面完全加载
   setTimeout(function() {
-    sendMsg({ type: 'refresh_devices' });
+    refreshDevices(true);
   }, 500);
 })();
 </script>
@@ -1065,6 +1166,7 @@ private:
 
 struct DeviceConfig {
     std::string id;
+    std::string name;
     bool enabled = true;
     float hpf_hz = 0;
     float lpf_hz = 0;
@@ -1082,10 +1184,12 @@ public:
 
     bool start(const std::vector<DeviceConfig>& devices) {
         if (running_) stop();
+        last_error_.clear();
 
         buffer_ = new SharedAudioBuffer(480000);
         capture_ = new WasapiCapture(*buffer_);
         if (!capture_->initialize()) {
+            last_error_ = "初始化默认捕获设备失败";
             delete capture_; capture_ = nullptr;
             delete buffer_; buffer_ = nullptr;
             return false;
@@ -1093,6 +1197,7 @@ public:
 
         output_ = new WasapiOutput(*buffer_);
         if (!output_->initialize()) {
+            last_error_ = "初始化输出模块失败";
             delete output_; output_ = nullptr;
             delete capture_; capture_ = nullptr;
             delete buffer_; buffer_ = nullptr;
@@ -1104,13 +1209,21 @@ public:
         Sleep(50);
 
         int ok = 0;
+        std::vector<std::string> errors;
         for (auto& dc : devices) {
             if (dc.enabled) {
-                if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, 100))
+                if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, 100)) {
                     ++ok;
+                } else {
+                    errors.push_back(DeviceLabel(dc.name, dc.id) + "：" + output_->getLastError());
+                }
             }
         }
+        if (!errors.empty()) {
+            last_error_ = errors.front();
+        }
         if (ok == 0) {
+            if (last_error_.empty()) last_error_ = "没有可用的输出设备启动成功";
             capture_->stop();
             delete output_; output_ = nullptr;
             delete capture_; capture_ = nullptr;
@@ -1123,23 +1236,57 @@ public:
     }
 
     void stop() {
-        if (!running_) return;
-        running_ = false;
-        if (output_)  { output_->stopAll();  delete output_;  output_  = nullptr; }
-        if (capture_) { capture_->stop();    delete capture_; capture_ = nullptr; }
-        if (buffer_)  { delete buffer_; buffer_ = nullptr; }
-        configs_.clear();
+        stopRuntime(true);
     }
 
-    void updateDevice(const std::string& deviceId, float hpf, float lpf, int volume) {
-        if (!running_ || !output_) return;
-        output_->updateDevice(deviceId, hpf, lpf, volume);
-        for (auto& c : configs_) {
-            if (c.id == deviceId) {
-                c.hpf_hz = hpf; c.lpf_hz = lpf; c.volume = volume;
-                break;
+    RuntimeUpdateResult updateDevice(const DeviceConfig& config) {
+        RuntimeUpdateResult result;
+        auto it = findConfig(config.id);
+        bool wasEnabled = it != configs_.end() && it->enabled;
+
+        if (!running_ || !output_) {
+            if (it != configs_.end()) {
+                it->enabled = config.enabled;
+                it->hpf_hz = config.hpf_hz;
+                it->lpf_hz = config.lpf_hz;
+                it->volume = config.volume;
             }
+            return result;
         }
+
+        if (config.enabled) {
+            if (wasEnabled && output_->isDeviceRunning(config.id)) {
+                output_->updateDevice(config.id, config.hpf_hz, config.lpf_hz, 100);
+            } else if (output_->startDevice(config.id, config.hpf_hz, config.lpf_hz, 100)) {
+                result.device_started = true;
+            } else {
+                result.ok = false;
+                result.error = DeviceLabel(config.name, config.id) + "：" + output_->getLastError();
+            }
+        } else if (wasEnabled || output_->isDeviceRunning(config.id)) {
+            output_->stopDevice(config.id);
+            result.device_stopped = true;
+        }
+
+        if (it != configs_.end()) {
+            it->name = config.name;
+            it->enabled = result.ok ? config.enabled : false;
+            it->hpf_hz = config.hpf_hz;
+            it->lpf_hz = config.lpf_hz;
+            it->volume = config.volume;
+        } else {
+            DeviceConfig next = config;
+            if (!result.ok) next.enabled = false;
+            configs_.push_back(next);
+        }
+        return result;
+    }
+
+    bool restartForDefaultDeviceChange() {
+        if (!running_) return true;
+        std::vector<DeviceConfig> saved = configs_;
+        stopRuntime(false);
+        return start(saved);
     }
 
     std::vector<DeviceInfo> enumerateDevices() {
@@ -1208,13 +1355,28 @@ public:
     }
 
     bool isRunning() const { return running_; }
+    const std::string& getLastError() const { return last_error_; }
 
 private:
+    std::vector<DeviceConfig>::iterator findConfig(const std::string& id) {
+        return std::find_if(configs_.begin(), configs_.end(), [&](const DeviceConfig& c) { return c.id == id; });
+    }
+
+    void stopRuntime(bool clearConfigs) {
+        if (!running_ && !output_ && !capture_ && !buffer_) return;
+        running_ = false;
+        if (output_)  { output_->stopAll();  delete output_;  output_  = nullptr; }
+        if (capture_) { capture_->stop();    delete capture_; capture_ = nullptr; }
+        if (buffer_)  { delete buffer_; buffer_ = nullptr; }
+        if (clearConfigs) configs_.clear();
+    }
+
     SharedAudioBuffer* buffer_ = nullptr;
     WasapiCapture*     capture_ = nullptr;
     WasapiOutput* output_ = nullptr;
     bool running_ = false;
     std::vector<DeviceConfig> configs_;
+    std::string last_error_;
     SystemVolumeManager* volumeManager_ = nullptr;
 };
 
@@ -1340,6 +1502,7 @@ public:
             event->muted = muted;
             PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event));
         });
+        initializeDeviceNotifications();
 
         // 标准无边框窗口做法：保留系统阴影和 Aero Snap，但不把 DWM frame 扩进客户区
         BOOL darkMode = TRUE;
@@ -1379,6 +1542,22 @@ private:
     HMODULE wv2Dll_ = nullptr;
     AudioEngine engine_;
     SystemVolumeManager volumeManager_;
+    IMMDeviceEnumerator* deviceEnumerator_ = nullptr;
+    DefaultDeviceNotificationClient* defaultDeviceClient_ = nullptr;
+
+    void initializeDeviceNotifications() {
+        if (deviceEnumerator_) return;
+        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                      __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&deviceEnumerator_));
+        if (FAILED(hr) || !deviceEnumerator_) return;
+        defaultDeviceClient_ = new DefaultDeviceNotificationClient([this]() {
+            PostMessageW(hwnd_, WM_APP_DEFAULT_DEVICE_CHANGED, 0, 0);
+        });
+        if (FAILED(deviceEnumerator_->RegisterEndpointNotificationCallback(defaultDeviceClient_))) {
+            defaultDeviceClient_->Release();
+            defaultDeviceClient_ = nullptr;
+        }
+    }
 
     bool initWebView() {
         // Load WebView2Loader.dll dynamically
@@ -1505,7 +1684,7 @@ private:
 
         if (type == "refresh_devices") {
             auto devs = engine_.enumerateDevices();
-            sendDeviceList(devs);
+            sendDeviceList(devs, msg["silent"].asBool());
         }
         else if (type == "start") {
             std::vector<DeviceConfig> configs;
@@ -1514,6 +1693,7 @@ private:
                 auto& d = arr[i];
                 DeviceConfig dc;
                 dc.id = d["id"].asString();
+                dc.name = d["name"].asString();
                 dc.enabled = d["enabled"].asBool();
                 dc.hpf_hz = (float)d["hpf"].asNumber();
                 dc.lpf_hz = (float)d["lpf"].asNumber();
@@ -1521,7 +1701,8 @@ private:
                 configs.push_back(dc);
             }
             if (!engine_.start(configs)) {
-                sendMessage("{\"type\":\"error\",\"message\":\"启动失败，请检查音频设备\"}");
+                std::string message = engine_.getLastError().empty() ? "启动失败，请检查音频设备" : engine_.getLastError();
+                sendError(message);
             } else {
                 sendStatus(true);
             }
@@ -1531,15 +1712,26 @@ private:
             sendStatus(false);
         }
         else if (type == "device_update") {
-            std::string devId = msg["deviceId"].asString();
-            float hpf = (float)msg["hpf"].asNumber();
-            float lpf = (float)msg["lpf"].asNumber();
-            int vol = msg["volume"].asInt();
+            DeviceConfig dc;
+            dc.id = msg["deviceId"].asString();
+            dc.name = msg["name"].asString();
+            dc.enabled = msg["enabled"].asBool();
+            dc.hpf_hz = (float)msg["hpf"].asNumber();
+            dc.lpf_hz = (float)msg["lpf"].asNumber();
+            dc.volume = msg["volume"].asInt();
             bool muted = msg["muted"].asBool();
-            if (!volumeManager_.setState(devId, vol, muted)) {
-                sendMessage("{\"type\":\"error\",\"message\":\"系统音量设置失败\"}");
+            if (!volumeManager_.setState(dc.id, dc.volume, muted)) {
+                sendError("系统音量设置失败");
             }
-            engine_.updateDevice(devId, hpf, lpf, 100);
+            RuntimeUpdateResult result = engine_.updateDevice(dc);
+            if (!result.ok) {
+                sendError(result.error.empty() ? "输出设备更新失败" : result.error);
+                sendDeviceEnabled(dc.id, false);
+            } else if (result.device_started) {
+                showInfo(DeviceLabel(dc.name, dc.id) + " 已启用");
+            } else if (result.device_stopped) {
+                showInfo(DeviceLabel(dc.name, dc.id) + " 已停止");
+            }
         }
         else if (type == "window_control") {
             std::string action = msg["action"].asString();
@@ -1572,8 +1764,10 @@ private:
         }
     }
 
-    void sendDeviceList(const std::vector<DeviceInfo>& devs) {
-        std::string json = "{\"type\":\"device_list\",\"devices\":[";
+    void sendDeviceList(const std::vector<DeviceInfo>& devs, bool silent = false) {
+        std::string json = "{\"type\":\"device_list\",\"silent\":";
+        json += silent ? "true" : "false";
+        json += ",\"devices\":[";
         for (size_t i = 0; i < devs.size(); ++i) {
             if (i > 0) json += ",";
             json += "{\"id\":\"" + EscapeJson(devs[i].id) +
@@ -1611,6 +1805,31 @@ private:
         executeScript(script);
     }
 
+    void sendDeviceEnabled(const std::string& deviceId, bool enabled) {
+        std::string json = "{\"type\":\"device_enabled\",\"deviceId\":\"" + EscapeJson(deviceId) +
+                           "\",\"enabled\":" + (enabled ? "true" : "false") + "}";
+        sendMessage(json);
+        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
+                            + Utf8ToWide(json) + L");}";
+        executeScript(script);
+    }
+
+    void sendError(const std::string& message) {
+        std::string json = "{\"type\":\"error\",\"message\":\"" + EscapeJson(message) + "\"}";
+        sendMessage(json);
+        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
+                            + Utf8ToWide(json) + L");}";
+        executeScript(script);
+    }
+
+    void showInfo(const std::string& message) {
+        std::string json = "{\"type\":\"info\",\"message\":\"" + EscapeJson(message) + "\"}";
+        sendMessage(json);
+        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
+                            + Utf8ToWide(json) + L");}";
+        executeScript(script);
+    }
+
     void sendMessage(const std::string& json) {
         if (!webView_) return;
         std::wstring wjson = Utf8ToWide(json);
@@ -1624,6 +1843,17 @@ private:
     }
 
     void cleanup() {
+        if (deviceEnumerator_ && defaultDeviceClient_) {
+            deviceEnumerator_->UnregisterEndpointNotificationCallback(defaultDeviceClient_);
+        }
+        if (defaultDeviceClient_) {
+            defaultDeviceClient_->Release();
+            defaultDeviceClient_ = nullptr;
+        }
+        if (deviceEnumerator_) {
+            deviceEnumerator_->Release();
+            deviceEnumerator_ = nullptr;
+        }
         volumeManager_.shutdown();
         engine_.stop();
         if (webView_ && msgToken_.value != 0) {
@@ -1684,6 +1914,21 @@ private:
                 app->sendVolumeUpdate(event->device_id, event->volume, event->muted);
                 delete event;
             }
+            return 0;
+        }
+
+        case WM_APP_DEFAULT_DEVICE_CHANGED: {
+            if (!app) break;
+            bool wasRunning = app->engine_.isRunning();
+            if (wasRunning && !app->engine_.restartForDefaultDeviceChange()) {
+                std::string message = app->engine_.getLastError().empty() ? "默认捕获设备切换失败" : app->engine_.getLastError();
+                app->sendError(message);
+            } else if (wasRunning) {
+                app->sendStatus(true);
+                app->showInfo("默认捕获设备已跟随系统切换");
+            }
+            auto devs = app->engine_.enumerateDevices();
+            app->sendDeviceList(devs, true);
             return 0;
         }
 

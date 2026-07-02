@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 // 设备友好名称属性键
 static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
@@ -9,6 +10,12 @@ static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
 };
 
 // ============ BiquadFilter ============
+
+static float ClampFilterHz(int hz, int sample_rate) {
+    if (hz <= 0) return 0.0f;
+    float max_hz = (std::max)(20.0f, sample_rate * 0.45f);
+    return (std::max)(20.0f, (std::min)((float)hz, max_hz));
+}
 
 void WasapiOutput::BiquadFilter::setHPF(float fc, float fs) {
     // RBJ cookbook: 2阶 Butterworth 高通
@@ -148,15 +155,29 @@ std::vector<DeviceInfo> WasapiOutput::enumerateDevices() {
 
 bool WasapiOutput::startDevice(const std::string& device_id,
                                float hpf_hz, float lpf_hz, int volume) {
+    last_error_.clear();
+    if (!enumerator_) {
+        last_error_ = "输出设备枚举器未初始化";
+        return false;
+    }
     if (!running_) running_ = true;
+    if (isDeviceRunning(device_id)) {
+        updateDevice(device_id, hpf_hz, lpf_hz, volume);
+        return true;
+    }
 
-    // UTF-8 设备ID -> wstring
     int wlen = MultiByteToWideChar(CP_UTF8, 0, device_id.c_str(), -1, nullptr, 0);
+    if (wlen <= 0) {
+        last_error_ = "设备 ID 转换失败";
+        return false;
+    }
     std::wstring wid(wlen, 0);
     MultiByteToWideChar(CP_UTF8, 0, device_id.c_str(), -1, &wid[0], wlen);
 
     IMMDevice* device = nullptr;
-    if (FAILED(enumerator_->GetDevice(wid.c_str(), &device))) {
+    HRESULT hr = enumerator_->GetDevice(wid.c_str(), &device);
+    if (FAILED(hr) || !device) {
+        last_error_ = "找不到输出设备";
         std::cerr << "[错误] 找不到设备: " << device_id << std::endl;
         return false;
     }
@@ -165,12 +186,40 @@ bool WasapiOutput::startDevice(const std::string& device_id,
     return ok;
 }
 
+bool WasapiOutput::isDeviceRunning(const std::string& device_id) const {
+    for (auto* s : streams_) {
+        if (s->device_id == device_id) return true;
+    }
+    return false;
+}
+
+bool WasapiOutput::stopDevice(const std::string& device_id) {
+    for (auto it = streams_.begin(); it != streams_.end(); ++it) {
+        RenderStream* s = *it;
+        if (s->device_id != device_id) continue;
+        s->running.store(false, std::memory_order_release);
+        if (s->event) SetEvent(s->event);
+        if (s->thread.joinable()) s->thread.join();
+        if (s->render_client) s->render_client->Release();
+        if (s->audio_client) s->audio_client->Release();
+        if (s->device) s->device->Release();
+        if (s->event) CloseHandle(s->event);
+        delete s;
+        streams_.erase(it);
+        if (streams_.empty()) running_ = false;
+        return true;
+    }
+    return false;
+}
+
 void WasapiOutput::updateDevice(const std::string& device_id,
                                 float hpf_hz, float lpf_hz, int volume) {
+    int hpf = (int)ClampFilterHz((int)hpf_hz, sample_rate_);
+    int lpf = (int)ClampFilterHz((int)lpf_hz, sample_rate_);
     for (auto* s : streams_) {
         if (s->device_id == device_id) {
-            s->hpf_hz.store((int)hpf_hz, std::memory_order_release);
-            s->lpf_hz.store((int)lpf_hz, std::memory_order_release);
+            s->hpf_hz.store(hpf, std::memory_order_release);
+            s->lpf_hz.store(lpf, std::memory_order_release);
             s->volume.store(volume, std::memory_order_release);
             break;
         }
@@ -179,7 +228,11 @@ void WasapiOutput::updateDevice(const std::string& device_id,
 
 bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
                                 int hpf_hz, int lpf_hz, int volume) {
+    last_error_.clear();
+    hpf_hz = (int)ClampFilterHz(hpf_hz, sample_rate_);
+    lpf_hz = (int)ClampFilterHz(lpf_hz, sample_rate_);
     if (channels_ > RenderStream::MAX_CHANNELS) {
+        last_error_ = "输出声道数超过支持上限";
         std::cerr << "[错误] 声道数 " << channels_ << " 超过最大值 "
                   << RenderStream::MAX_CHANNELS << std::endl;
         return false;
@@ -189,6 +242,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     IAudioClient* audio_client = nullptr;
     HRESULT hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client);
     if (FAILED(hr)) {
+        last_error_ = "激活输出音频客户端失败";
         std::cerr << "[错误] 激活音频客户端失败" << std::endl;
         return false;
     }
@@ -210,6 +264,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
                                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                    100000, 0, &format, nullptr);
     if (FAILED(hr)) {
+        last_error_ = "初始化输出音频客户端失败";
         std::cerr << "[错误] 初始化音频客户端失败" << std::endl;
         audio_client->Release();
         CloseHandle(event);
@@ -219,6 +274,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     // 绑定事件句柄
     hr = audio_client->SetEventHandle(event);
     if (FAILED(hr)) {
+        last_error_ = "设置输出设备事件句柄失败";
         std::cerr << "[错误] 设置事件句柄失败" << std::endl;
         audio_client->Release();
         CloseHandle(event);
@@ -229,6 +285,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     IAudioRenderClient* render_client = nullptr;
     hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client);
     if (FAILED(hr)) {
+        last_error_ = "获取输出渲染客户端失败";
         std::cerr << "[错误] 获取渲染客户端失败" << std::endl;
         audio_client->Release();
         CloseHandle(event);
@@ -257,6 +314,7 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     stream->lpf_hz.store(lpf_hz, std::memory_order_relaxed);
     stream->volume.store(volume, std::memory_order_relaxed);
     stream->current_vol_scale = volume / 100.0f;  // 初始化为当前音量
+    stream->running.store(true, std::memory_order_relaxed);
 
     // 设置初始滤波器系数
     if (hpf_hz > 0) {
@@ -291,7 +349,7 @@ void WasapiOutput::renderThread(RenderStream* stream) {
     stream->current_vol_scale = 0.0f;
     bool fading_in = true;
 
-    while (running_) {
+    while (running_ && stream->running.load(std::memory_order_acquire)) {
         // 等待渲染缓冲区事件
         DWORD wait = WaitForSingleObject(stream->event, 100);
         if (wait == WAIT_TIMEOUT) continue;
@@ -305,10 +363,11 @@ void WasapiOutput::renderThread(RenderStream* stream) {
         // 参数变化时重新计算 biquad 系数并重置状态
         if (hpf != prev_hpf) {
             if (hpf > 0) {
+                float safe_hpf = ClampFilterHz(hpf, sample_rate_);
                 for (int s = 0; s < 2; ++s)
                     for (int ch = 0; ch < channels_; ++ch) {
                         stream->hpf_filters[s][ch].reset();
-                        stream->hpf_filters[s][ch].setHPF((float)hpf, (float)sample_rate_);
+                        stream->hpf_filters[s][ch].setHPF(safe_hpf, (float)sample_rate_);
                     }
             } else {
                 for (int s = 0; s < 2; ++s)
@@ -319,10 +378,11 @@ void WasapiOutput::renderThread(RenderStream* stream) {
         }
         if (lpf != prev_lpf) {
             if (lpf > 0) {
+                float safe_lpf = ClampFilterHz(lpf, sample_rate_);
                 for (int s = 0; s < 2; ++s)
                     for (int ch = 0; ch < channels_; ++ch) {
                         stream->lpf_filters[s][ch].reset();
-                        stream->lpf_filters[s][ch].setLPF((float)lpf, (float)sample_rate_);
+                        stream->lpf_filters[s][ch].setLPF(safe_lpf, (float)sample_rate_);
                     }
             } else {
                 for (int s = 0; s < 2; ++s)
@@ -396,6 +456,10 @@ void WasapiOutput::renderThread(RenderStream* stream) {
 
 void WasapiOutput::stopAll() {
     running_ = false;
+    for (auto* s : streams_) {
+        s->running.store(false, std::memory_order_release);
+        if (s->event) SetEvent(s->event);
+    }
     for (auto* s : streams_) {
         if (s->thread.joinable()) s->thread.join();
         if (s->render_client) s->render_client->Release();
