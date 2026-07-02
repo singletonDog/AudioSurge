@@ -92,8 +92,6 @@ private:
     void renderThread(RenderStream* stream);
     bool createStream(IMMDevice* device, const std::string& id,
                       int hpf_hz, int lpf_hz, int volume);
-    std::string getDeviceName(IMMDevice* device);
-    std::string getDeviceId(IMMDevice* device);
 
     SharedAudioBuffer& buffer_;
     std::vector<RenderStream*> streams_;

@@ -1,13 +1,10 @@
 #include "wasapi_output.h"
+#include "audio_devices.h"
+#include "app_common.h"
 #include <iostream>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-
-// 设备友好名称属性键
-static const PROPERTYKEY PKEY_DEVICE_FRIENDLYNAME = {
-    {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}}, 14
-};
 
 // ============ BiquadFilter ============
 
@@ -69,14 +66,15 @@ WasapiOutput::~WasapiOutput() {
 bool WasapiOutput::initialize() {
     HRESULT hr = CoInitialize(nullptr);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
-        std::cerr << "[错误] CoInitialize 失败" << std::endl;
+        last_error_ = HResultMessage("CoInitialize 失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         return false;
     }
-    // 创建设备枚举器
     hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                           __uuidof(IMMDeviceEnumerator), (void**)&enumerator_);
     if (FAILED(hr)) {
-        std::cerr << "[错误] 创建设备枚举器失败" << std::endl;
+        last_error_ = HResultMessage("创建设备枚举器失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         return false;
     }
     return true;
@@ -87,70 +85,8 @@ void WasapiOutput::setFormat(int sample_rate, int channels) {
     channels_ = channels;
 }
 
-std::string WasapiOutput::getDeviceName(IMMDevice* device) {
-    std::string result;
-    IPropertyStore* props = nullptr;
-    if (FAILED(device->OpenPropertyStore(STGM_READ, &props))) return result;
-    PROPVARIANT name;
-    PropVariantInit(&name);
-    if (SUCCEEDED(props->GetValue(PKEY_DEVICE_FRIENDLYNAME, &name))) {
-        std::wstring ws(name.pwszVal);
-        int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (len > 0) {
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, &result[0], len, nullptr, nullptr);
-        }
-        PropVariantClear(&name);
-    }
-    props->Release();
-    return result;
-}
-
-std::string WasapiOutput::getDeviceId(IMMDevice* device) {
-    std::string result;
-    LPWSTR id = nullptr;
-    if (SUCCEEDED(device->GetId(&id))) {
-        std::wstring ws(id);
-        int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (len > 0) {
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), -1, &result[0], len, nullptr, nullptr);
-        }
-        CoTaskMemFree(id);
-    }
-    return result;
-}
-
 std::vector<DeviceInfo> WasapiOutput::enumerateDevices() {
-    std::vector<DeviceInfo> devices;
-    if (!enumerator_) return devices;
-
-    // 获取默认输出设备ID
-    std::string default_id;
-    IMMDevice* default_dev = nullptr;
-    if (SUCCEEDED(enumerator_->GetDefaultAudioEndpoint(eRender, eConsole, &default_dev))) {
-        default_id = getDeviceId(default_dev);
-        default_dev->Release();
-    }
-
-    // 枚举所有活跃的渲染设备
-    IMMDeviceCollection* collection = nullptr;
-    if (FAILED(enumerator_->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection)))
-        return devices;
-    UINT count = 0;
-    collection->GetCount(&count);
-    for (UINT i = 0; i < count; ++i) {
-        IMMDevice* device = nullptr;
-        if (FAILED(collection->Item(i, &device))) continue;
-        DeviceInfo info;
-        info.id = getDeviceId(device);
-        info.name = getDeviceName(device);
-        info.is_default = (info.id == default_id);
-        devices.push_back(info);
-        device->Release();
-    }
-    collection->Release();
-    return devices;
+    return EnumerateRenderDevices();
 }
 
 bool WasapiOutput::startDevice(const std::string& device_id,
@@ -177,7 +113,7 @@ bool WasapiOutput::startDevice(const std::string& device_id,
     IMMDevice* device = nullptr;
     HRESULT hr = enumerator_->GetDevice(wid.c_str(), &device);
     if (FAILED(hr) || !device) {
-        last_error_ = "找不到输出设备";
+        last_error_ = HResultMessage("找不到输出设备", hr);
         std::cerr << "[错误] 找不到设备: " << device_id << std::endl;
         return false;
     }
@@ -242,8 +178,8 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     IAudioClient* audio_client = nullptr;
     HRESULT hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audio_client);
     if (FAILED(hr)) {
-        last_error_ = "激活输出音频客户端失败";
-        std::cerr << "[错误] 激活音频客户端失败" << std::endl;
+        last_error_ = HResultMessage("激活输出音频客户端失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         return false;
     }
 
@@ -264,8 +200,8 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
                                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                                    100000, 0, &format, nullptr);
     if (FAILED(hr)) {
-        last_error_ = "初始化输出音频客户端失败";
-        std::cerr << "[错误] 初始化音频客户端失败" << std::endl;
+        last_error_ = HResultMessage("初始化输出音频客户端失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         audio_client->Release();
         CloseHandle(event);
         return false;
@@ -274,8 +210,8 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     // 绑定事件句柄
     hr = audio_client->SetEventHandle(event);
     if (FAILED(hr)) {
-        last_error_ = "设置输出设备事件句柄失败";
-        std::cerr << "[错误] 设置事件句柄失败" << std::endl;
+        last_error_ = HResultMessage("设置输出设备事件句柄失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         audio_client->Release();
         CloseHandle(event);
         return false;
@@ -285,8 +221,8 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
     IAudioRenderClient* render_client = nullptr;
     hr = audio_client->GetService(__uuidof(IAudioRenderClient), (void**)&render_client);
     if (FAILED(hr)) {
-        last_error_ = "获取输出渲染客户端失败";
-        std::cerr << "[错误] 获取渲染客户端失败" << std::endl;
+        last_error_ = HResultMessage("获取输出渲染客户端失败", hr);
+        std::cerr << "[错误] " << last_error_ << std::endl;
         audio_client->Release();
         CloseHandle(event);
         return false;
