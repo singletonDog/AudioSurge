@@ -927,6 +927,8 @@ private:
             // 仅当窗口仍处于隐藏（在托盘）时才释放，避免刚恢复又被销毁
             if (!IsWindowVisible(hwnd)) {
                 app->suspendWebView();
+                // 主动把不活跃的物理页还给系统，明显降低任务管理器工作集数字
+                SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T)-1, (SIZE_T)-1);
             }
             return 0;
         }
