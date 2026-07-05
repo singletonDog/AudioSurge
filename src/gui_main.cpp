@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
 #include <mmdeviceapi.h>
 #include <WebView2.h>
 #include <string>
@@ -11,6 +12,7 @@
 #include "audio_devices.h"
 #include "audio_engine.h"
 #include "embedded_ui.h"
+#include "resource.h"
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -31,6 +33,10 @@
 static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
 static constexpr UINT WM_APP_VOLUME_CHANGED = WM_APP + 1;
 static constexpr UINT WM_APP_DEFAULT_DEVICE_CHANGED = WM_APP + 2;
+static constexpr UINT WM_APP_TRAYICON = WM_APP + 3;
+static constexpr UINT kTrayIconId = 1;
+static constexpr UINT kTrayMenuShow = 40001;
+static constexpr UINT kTrayMenuExit = 40002;
 
 struct VolumeChangedEvent {
     std::string device_id;
@@ -322,12 +328,14 @@ public:
         }
 
         // Register window class
+        HICON appIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
         WNDCLASSW wc = {};
         wc.lpfnWndProc = &App::StaticWndProc;
         wc.hInstance = hInst;
         wc.lpszClassName = L"AudioFluxWnd";
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
+        wc.hIcon = appIcon;
         RegisterClassW(&wc);
 
         // WS_POPUP + WS_THICKFRAME: 无可见边框，但保留系统缩放能力
@@ -344,6 +352,11 @@ public:
             WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
             x, y, winW, winH, nullptr, nullptr, hInst, this);
         if (!hwnd_) return false;
+
+        if (appIcon) {
+            SendMessageW(hwnd_, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(appIcon));
+            SendMessageW(hwnd_, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(appIcon));
+        }
 
         engine_.setVolumeManager(&volumeManager_);
         volumeManager_.initialize([this](const std::string& deviceId, int volume, bool muted) {
@@ -395,6 +408,8 @@ private:
     SystemVolumeManager volumeManager_;
     IMMDeviceEnumerator* deviceEnumerator_ = nullptr;
     DefaultDeviceNotificationClient* defaultDeviceClient_ = nullptr;
+    NOTIFYICONDATAW nid_ = {};
+    bool trayEnabled_ = false;
 
     void initializeDeviceNotifications() {
         if (deviceEnumerator_) return;
@@ -407,6 +422,53 @@ private:
         if (FAILED(deviceEnumerator_->RegisterEndpointNotificationCallback(defaultDeviceClient_))) {
             defaultDeviceClient_->Release();
             defaultDeviceClient_ = nullptr;
+        }
+    }
+
+    void enableTray() {
+        if (trayEnabled_) return;
+        nid_ = {};
+        nid_.cbSize = sizeof(NOTIFYICONDATAW);
+        nid_.hWnd = hwnd_;
+        nid_.uID = kTrayIconId;
+        nid_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        nid_.uCallbackMessage = WM_APP_TRAYICON;
+        nid_.hIcon = LoadIconW(hInstance_, MAKEINTRESOURCEW(IDI_APPICON));
+        wcscpy_s(nid_.szTip, L"AudioFlux");
+        if (Shell_NotifyIconW(NIM_ADD, &nid_)) {
+            trayEnabled_ = true;
+        }
+    }
+
+    void disableTray() {
+        if (!trayEnabled_) return;
+        Shell_NotifyIconW(NIM_DELETE, &nid_);
+        trayEnabled_ = false;
+    }
+
+    void restoreFromTray() {
+        ShowWindow(hwnd_, SW_SHOW);
+        ShowWindow(hwnd_, SW_RESTORE);
+        SetForegroundWindow(hwnd_);
+    }
+
+    void showTrayMenu() {
+        POINT pt;
+        GetCursorPos(&pt);
+        HMENU menu = CreatePopupMenu();
+        if (!menu) return;
+        AppendMenuW(menu, MF_STRING, kTrayMenuShow, L"显示窗口");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kTrayMenuExit, L"退出");
+        // TrackPopupMenu 需要前台窗口才能正确关闭菜单
+        SetForegroundWindow(hwnd_);
+        UINT cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                                  pt.x, pt.y, 0, hwnd_, nullptr);
+        DestroyMenu(menu);
+        if (cmd == kTrayMenuShow) {
+            restoreFromTray();
+        } else if (cmd == kTrayMenuExit) {
+            DestroyWindow(hwnd_);
         }
     }
 
@@ -597,6 +659,15 @@ private:
                 sendDeviceList(devs, true);
             }
         }
+        else if (type == "set_tray") {
+            bool enabled = msg["enabled"].asBool();
+            if (enabled) {
+                enableTray();
+            } else {
+                disableTray();
+            }
+            sendTrayState(trayEnabled_);
+        }
         else if (type == "window_control") {
             std::string action = msg["action"].asString();
             if (action == "minimize") {
@@ -608,7 +679,11 @@ private:
                     ShowWindow(hwnd_, SW_MAXIMIZE);
                 }
             } else if (action == "close") {
-                SendMessageW(hwnd_, WM_CLOSE, 0, 0);
+                if (trayEnabled_) {
+                    ShowWindow(hwnd_, SW_HIDE);
+                } else {
+                    SendMessageW(hwnd_, WM_CLOSE, 0, 0);
+                }
             } else if (action == "drag") {
                 ReleaseCapture();
                 SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);
@@ -653,6 +728,13 @@ private:
 
     void sendStatus(bool running) {
         std::string json = std::string("{\"type\":\"status\",\"running\":") + (running ? "true" : "false") + "}";
+        sendMessage(json);
+        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
+                            + Utf8ToWide(json) + L");}";
+        executeScript(script);
+    }
+    void sendTrayState(bool enabled) {
+        std::string json = std::string("{\"type\":\"tray_state\",\"enabled\":") + (enabled ? "true" : "false") + "}";
         sendMessage(json);
         std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
                             + Utf8ToWide(json) + L");}";
@@ -707,6 +789,7 @@ private:
     }
 
     void cleanup() {
+        disableTray();
         if (deviceEnumerator_ && defaultDeviceClient_) {
             deviceEnumerator_->UnregisterEndpointNotificationCallback(defaultDeviceClient_);
         }
@@ -777,6 +860,16 @@ private:
             if (event) {
                 app->sendVolumeUpdate(event->device_id, event->volume, event->muted);
                 delete event;
+            }
+            return 0;
+        }
+
+        case WM_APP_TRAYICON: {
+            if (!app) break;
+            if (LOWORD(lParam) == WM_LBUTTONUP || LOWORD(lParam) == WM_LBUTTONDBLCLK) {
+                app->restoreFromTray();
+            } else if (LOWORD(lParam) == WM_RBUTTONUP) {
+                app->showTrayMenu();
             }
             return 0;
         }

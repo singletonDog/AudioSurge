@@ -54,7 +54,8 @@ body::before{
   background:linear-gradient(180deg, rgba(30,25,60,0.85) 0%, rgba(20,18,45,0.85) 100%);
   border-bottom:1px solid rgba(109,59,255,0.25);
 }
-.title-logo{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--accent2);font-size:18px;filter:drop-shadow(0 0 6px rgba(109,59,255,0.6))}
+.title-logo{width:24px;height:24px;display:flex;align-items:center;justify-content:center;filter:drop-shadow(0 0 6px rgba(109,59,255,0.6))}
+.title-logo img{width:100%;height:100%;object-fit:contain;display:block}
 .title-text{font-size:15px;font-weight:700;background:linear-gradient(135deg,#d0c2ff 0%, #a080ff 60%, var(--accent2) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:0.3px}
 .title-spacer{flex:1}
 /* Window Control Buttons - right 140px area matches WM_NCHITTEST BUTTON_RIGHT_MARGIN */
@@ -184,8 +185,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 .corner-btn{position:absolute;bottom:28px;width:44px;height:44px;border:1px solid rgba(109,59,255,0.35);border-radius:14px;background:rgba(37,37,73,0.72);color:var(--text2);font-size:20px;font-weight:600;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)}
 .corner-btn:hover{border-color:rgba(157,114,255,0.65);color:#fff;background:rgba(109,59,255,0.24);transform:translateY(-1px)}
 .corner-btn:disabled{opacity:0.55;cursor:not-allowed;transform:none}
-.settings-btn{left:32px;cursor:default}
-.settings-btn:hover{color:var(--text2);background:rgba(37,37,73,0.72);border-color:rgba(109,59,255,0.35);transform:none}
+.settings-btn{left:32px}
 .refresh-btn{right:32px}
 .refresh-icon{display:inline-block;line-height:1}
 .refresh-btn.refreshing .refresh-icon{animation:spin 0.8s linear infinite}
@@ -224,12 +224,29 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 .toast.info{background:rgba(109,59,255,0.92);box-shadow:0 4px 20px rgba(109,59,255,0.4), 0 2px 6px rgba(0,0,0,0.3)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes fadeOut{from{opacity:1}to{opacity:0}}
+
+/* Settings floating panel */
+.settings-panel{position:absolute;left:32px;bottom:84px;width:260px;padding:18px 20px;
+  background:rgba(28,28,58,0.98);border:1px solid rgba(109,59,255,0.4);border-radius:16px;
+  box-shadow:0 12px 40px rgba(0,0,0,0.45),0 2px 8px rgba(109,59,255,0.25);
+  backdrop-filter:blur(16px);z-index:9998;display:none;animation:panelIn 0.18s ease}
+.settings-panel.open{display:block}
+@keyframes panelIn{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+.settings-panel .panel-title{font-size:14px;font-weight:700;color:var(--text1);margin-bottom:16px;letter-spacing:0.3px}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.settings-row .row-label{font-size:13px;color:var(--text2)}
+.switch{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .track{position:absolute;inset:0;cursor:pointer;background:rgba(120,120,150,0.4);border-radius:24px;transition:0.2s}
+.switch .track::before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:0.2s}
+.switch input:checked + .track{background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%)}
+.switch input:checked + .track::before{transform:translateX(20px)}
 </style>
 </head>
 <body>
 <div class="app">
   <div class="title-bar">
-    <div class="title-logo">&#9835;</div>
+    <div class="title-logo"><img src="data:image/png;base64,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" alt="AudioFlux"></div>
     <div class="title-text">AudioFlux</div>
     <div class="title-spacer"></div>
     <div class="win-ctrl">
@@ -251,7 +268,17 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     </div>
   </main>
   <div class="bottom-bar">
-    <button class="corner-btn settings-btn" id="settingsBtn" title="设置（暂未开放）" aria-label="设置（暂未开放）">&#9881;</button>
+    <button class="corner-btn settings-btn" id="settingsBtn" title="设置" aria-label="设置">&#9881;</button>
+    <div class="settings-panel" id="settingsPanel">
+      <div class="panel-title">设置</div>
+      <div class="settings-row">
+        <span class="row-label">系统托盘图标</span>
+        <label class="switch">
+          <input type="checkbox" id="trayToggle">
+          <span class="track"></span>
+        </label>
+      </div>
+    </div>
     <button class="action-btn start" id="actionBtn">&#9654; 启动 AudioFlux</button>
     <div class="status-row">
       <span class="status-dot-small stopped" id="statusDot"></span>
@@ -654,6 +681,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
         case 'window_state':
           updateMaxButton(data.maximized);
           break;
+        case 'tray_state':
+          applyTrayState(data.enabled);
+          break;
         case 'volume_changed':
           applyNativeVolume(data.deviceId, data.volume, data.muted);
           break;
@@ -695,6 +725,32 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   if (minBtn) minBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'minimize'}); });
   if (maxBtn) maxBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'toggle_max'}); });
   if (closeBtn) closeBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'close'}); });
+
+  // 设置浮动面板与系统托盘开关
+  var settingsBtn = document.getElementById('settingsBtn');
+  var settingsPanel = document.getElementById('settingsPanel');
+  var trayToggle = document.getElementById('trayToggle');
+
+  function applyTrayState(enabled) {
+    if (trayToggle) trayToggle.checked = !!enabled;
+  }
+
+  if (settingsBtn && settingsPanel) {
+    settingsBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      settingsPanel.classList.toggle('open');
+    });
+    settingsPanel.addEventListener('click', function(e) { e.stopPropagation(); });
+    document.addEventListener('click', function() {
+      settingsPanel.classList.remove('open');
+    });
+  }
+
+  if (trayToggle) {
+    trayToggle.addEventListener('change', function() {
+      sendMsg({type:'set_tray', enabled: trayToggle.checked});
+    });
+  }
 
   // 窗口边缘缩放 + 标题栏拖动
   var EDGE = 6;

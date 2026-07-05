@@ -1,0 +1,6 @@
+#ifndef AUDIOFLUX_RESOURCE_H
+#define AUDIOFLUX_RESOURCE_H
+
+#define IDI_APPICON 101
+
+#endif

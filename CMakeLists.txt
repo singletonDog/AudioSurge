@@ -11,6 +11,12 @@ add_executable(AudioFlux WIN32
     src/system/system_volume.cpp
     src/audio/wasapi_capture.cpp
     src/audio/wasapi_output.cpp
+    src/app.rc
+)
+
+# 让资源在图标文件变化时自动重编（.rc 默认不跟踪 ICON 引用的 .ico）
+set_source_files_properties(src/app.rc PROPERTIES
+    OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/assets/audioflux.ico
 )
 
 target_include_directories(AudioFlux PRIVATE
