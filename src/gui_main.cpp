@@ -738,6 +738,12 @@ private:
                 } else {
                     SendMessageW(hwnd_, WM_CLOSE, 0, 0);
                 }
+            } else if (action == "background") {
+                // 后台运行：隐藏窗口并释放 WebView；再次启动 exe 可通过单实例机制唤回
+                ShowWindow(hwnd_, SW_HIDE);
+                PostMessageW(hwnd_, WM_APP_SUSPEND_WEBVIEW, 0, 0);
+            } else if (action == "exit") {
+                SendMessageW(hwnd_, WM_CLOSE, 0, 0);
             } else if (action == "drag") {
                 ReleaseCapture();
                 SendMessageW(hwnd_, WM_NCLBUTTONDOWN, HTCAPTION, 0);

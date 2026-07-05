@@ -228,6 +228,21 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 .switch .track::before{content:"";position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:0.2s}
 .switch input:checked + .track{background:linear-gradient(135deg,var(--accent) 0%,var(--accent2) 100%)}
 .switch input:checked + .track::before{transform:translateX(20px)}
+
+/* 关闭确认模态框 */
+.modal-mask{position:fixed;inset:0;background:rgba(8,8,20,0.55);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.15s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal-box{width:320px;padding:26px 26px 22px;border-radius:18px;border:1px solid rgba(109,59,255,0.4);
+  background:linear-gradient(145deg,rgba(37,37,73,0.98),rgba(26,26,58,0.98));
+  box-shadow:0 18px 50px rgba(0,0,0,0.5),0 2px 10px rgba(109,59,255,0.3);animation:panelIn 0.18s ease}
+.modal-title{font-size:16px;font-weight:700;color:var(--text1);margin-bottom:12px;letter-spacing:0.3px}
+.modal-msg{font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:22px}
+.modal-actions{display:flex;gap:12px}
+.modal-btn{flex:1;padding:11px 0;border:1px solid rgba(109,59,255,0.4);border-radius:12px;
+  background:rgba(109,59,255,0.16);color:#fff;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.15s}
+.modal-btn:hover{background:rgba(109,59,255,0.32);border-color:rgba(157,114,255,0.7);transform:translateY(-1px)}
+.modal-btn.danger{background:rgba(230,57,70,0.16);border-color:rgba(230,57,70,0.45)}
+.modal-btn.danger:hover{background:rgba(230,57,70,0.32);border-color:rgba(255,107,107,0.7)}
 </style>
 </head>
 <body>
@@ -716,7 +731,43 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   var closeBtn = document.getElementById('winClose');
   if (minBtn) minBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'minimize'}); });
   if (maxBtn) maxBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'toggle_max'}); });
-  if (closeBtn) closeBtn.addEventListener('click', function() { sendMsg({type:'window_control',action:'close'}); });
+  if (closeBtn) closeBtn.addEventListener('click', function() {
+    var trayOn = document.getElementById('trayToggle');
+    if (trayOn && trayOn.checked) {
+      // 托盘开启：直接隐藏到托盘
+      sendMsg({type:'window_control', action:'close'});
+    } else {
+      // 托盘关闭：询问后台运行还是退出
+      showCloseDialog();
+    }
+  });
+
+  // 关闭确认对话框：左“后台运行”，右“退出程序”
+  function showCloseDialog() {
+    if (document.getElementById('closeDialogMask')) return;
+    var mask = document.createElement('div');
+    mask.id = 'closeDialogMask';
+    mask.className = 'modal-mask';
+    mask.innerHTML =
+      '<div class="modal-box">' +
+        '<div class="modal-title">关闭 AudioFlux</div>' +
+        '<div class="modal-msg">您希望让程序在后台继续运行，还是退出程序？</div>' +
+        '<div class="modal-actions">' +
+          '<button class="modal-btn" id="closeDlgBackground">后台运行</button>' +
+          '<button class="modal-btn danger" id="closeDlgExit">退出程序</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+    function closeDlg() { mask.remove(); }
+    mask.addEventListener('click', function(e) { if (e.target === mask) closeDlg(); });
+    document.getElementById('closeDlgBackground').addEventListener('click', function() {
+      closeDlg();
+      sendMsg({type:'window_control', action:'background'});
+    });
+    document.getElementById('closeDlgExit').addEventListener('click', function() {
+      sendMsg({type:'window_control', action:'exit'});
+    });
+  }
 
   // 设置浮动面板与系统托盘开关
   var settingsBtn = document.getElementById('settingsBtn');
