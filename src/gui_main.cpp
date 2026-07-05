@@ -37,6 +37,7 @@ static constexpr UINT WM_APP_TRAYICON = WM_APP + 3;
 static constexpr UINT kTrayIconId = 1;
 static constexpr UINT kTrayMenuShow = 40001;
 static constexpr UINT kTrayMenuExit = 40002;
+static UINT g_showInstanceMsg = 0;
 
 struct VolumeChangedEvent {
     std::string device_id;
@@ -833,6 +834,12 @@ private:
             app = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         }
 
+        // 另一个实例请求唤起窗口
+        if (msg == g_showInstanceMsg && g_showInstanceMsg != 0 && app) {
+            app->restoreFromTray();
+            return 0;
+        }
+
         switch (msg) {
         case WM_NCCALCSIZE: {
             if (wParam == TRUE) return 0;
@@ -925,16 +932,32 @@ private:
 // ============================================================================
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
+    // 注册全局唤起消息，用于让已运行实例显示到前台
+    g_showInstanceMsg = RegisterWindowMessageW(L"AudioFluxShowInstanceMsg");
+
+    // 单实例：命名 Mutex 检测是否已有实例在运行
+    HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"AudioFlux_SingleInstance_Mutex");
+    if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        // 已有实例：广播唤起消息让其显示，然后退出本进程
+        if (g_showInstanceMsg) {
+            PostMessageW(HWND_BROADCAST, g_showInstanceMsg, 0, 0);
+        }
+        CloseHandle(instanceMutex);
+        return 0;
+    }
+
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     App app;
     if (!app.init(hInstance)) {
         CoUninitialize();
+        if (instanceMutex) CloseHandle(instanceMutex);
         return 1;
     }
 
     int ret = app.run();
     CoUninitialize();
+    if (instanceMutex) CloseHandle(instanceMutex);
     return ret;
 }
 
