@@ -190,26 +190,6 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 .refresh-icon{display:inline-block;line-height:1}
 .refresh-btn.refreshing .refresh-icon{animation:spin 0.8s linear infinite}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-.action-btn{
-  min-width:340px;padding:16px 32px;border:none;border-radius:18px;
-  font-size:17px;font-weight:700;cursor:pointer;transition:all 0.2s;
-  letter-spacing:1px;color:#fff;
-  background:linear-gradient(135deg, #5a2bff 0%, var(--accent) 40%, var(--accent2) 100%);
-  box-shadow:
-    0 6px 28px rgba(109,59,255,0.45),
-    0 2px 8px rgba(109,59,255,0.3),
-    inset 0 1px 0 rgba(255,255,255,0.15);
-}
-.action-btn:hover{
-  box-shadow:
-    0 8px 38px rgba(109,59,255,0.6),
-    0 3px 12px rgba(109,59,255,0.4),
-    inset 0 1px 0 rgba(255,255,255,0.2);
-  transform:translateY(-1px);
-}
-.action-btn:active{transform:translateY(0);box-shadow:0 3px 18px rgba(109,59,255,0.45), inset 0 1px 0 rgba(255,255,255,0.1)}
-.action-btn.stop{background:linear-gradient(135deg,#c02030 0%,#e63946 40%,#ff6b6b 100%);box-shadow:0 6px 28px rgba(230,57,70,0.4),0 2px 8px rgba(230,57,70,0.3),inset 0 1px 0 rgba(255,255,255,0.15)}
-.action-btn.stop:hover{box-shadow:0 8px 38px rgba(230,57,70,0.55),0 3px 12px rgba(230,57,70,0.4),inset 0 1px 0 rgba(255,255,255,0.2)}
 
 .status-row{display:flex;align-items:center;gap:8px;font-size:13px}
 .status-dot-small{width:8px;height:8px;border-radius:50%;transition:all 0.3s}
@@ -279,10 +259,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
         </label>
       </div>
     </div>
-    <button class="action-btn start" id="actionBtn">&#9654; 启动 AudioFlux</button>
     <div class="status-row">
       <span class="status-dot-small stopped" id="statusDot"></span>
-      <span class="status-text stopped" id="statusText">已停止</span>
+      <span class="status-text stopped" id="statusText">正在启动...</span>
     </div>
     <button class="corner-btn refresh-btn" id="refreshBtn" title="刷新设备" aria-label="刷新设备"><span class="refresh-icon">&#8635;</span></button>
   </div>
@@ -290,6 +269,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 <script>
 (function(){
   var isRunning = false;
+  var pendingStart = false;
+  var forceRestart = false;
   var devices = [];
   var stateById = {};
 
@@ -612,42 +593,35 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     sendMsg({ type: 'device_update', deviceId: s.id, name: s.name, enabled: s.enabled, volume: s.volume, muted: s.muted, hpf: s.hpf, lpf: s.lpf });
   }
 
-  function refreshDevices(silent) {
+  function refreshDevices(silent, force) {
     setRefreshState(!silent);
+    pendingStart = true;
+    forceRestart = !!force;
     sendMsg({ type: 'refresh_devices', silent: !!silent });
   }
 
-  document.getElementById('refreshBtn').addEventListener('click', function() {
-    refreshDevices(false);
-  });
+  function startAudio() {
+    var devs = [];
+    devices.forEach(function(d) {
+      var s = getDevState(d.id);
+      if (s) devs.push(s);
+    });
+    sendMsg({ type: 'start', devices: devs });
+  }
 
-  document.getElementById('actionBtn').addEventListener('click', function() {
-    if (isRunning) {
-      sendMsg({ type: 'stop' });
-    } else {
-      var devs = [];
-      devices.forEach(function(d) {
-        var s = getDevState(d.id);
-        if (s) devs.push(s);
-      });
-      sendMsg({ type: 'start', devices: devs });
-    }
+  document.getElementById('refreshBtn').addEventListener('click', function() {
+    refreshDevices(false, true);
   });
 
   function updateStatus(running) {
     isRunning = running;
-    var btn = document.getElementById('actionBtn');
     var dot = document.getElementById('statusDot');
     var txt = document.getElementById('statusText');
     if (running) {
-      btn.innerHTML = '&#9632; 停止 AudioFlux';
-      btn.className = 'action-btn stop';
       dot.className = 'status-dot-small running';
       txt.textContent = '运行中';
       txt.className = 'status-text running';
     } else {
-      btn.innerHTML = '&#9654; 启动 AudioFlux';
-      btn.className = 'action-btn start';
       dot.className = 'status-dot-small stopped';
       txt.textContent = '已停止';
       txt.className = 'status-text stopped';
@@ -674,6 +648,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           renderDevices(data.devices);
           setRefreshState(false);
           if (!data.silent) showToast('设备列表已刷新', 'info');
+          if (pendingStart) {
+            pendingStart = false;
+            if (forceRestart || !data.running) {
+              startAudio();
+            }
+            forceRestart = false;
+          }
           break;
         case 'status':
           updateStatus(data.running);

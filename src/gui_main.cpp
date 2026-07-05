@@ -760,6 +760,8 @@ private:
     void sendDeviceList(const std::vector<DeviceInfo>& devs, bool silent = false) {
         std::string json = "{\"type\":\"device_list\",\"silent\":";
         json += silent ? "true" : "false";
+        json += ",\"running\":";
+        json += engine_.isRunning() ? "true" : "false";
         json += ",\"devices\":[";
         for (size_t i = 0; i < devs.size(); ++i) {
             if (i > 0) json += ",";
