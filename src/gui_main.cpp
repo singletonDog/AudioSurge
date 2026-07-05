@@ -34,6 +34,7 @@ static constexpr COLORREF kWindowBgColor = RGB(18, 18, 43);
 static constexpr UINT WM_APP_VOLUME_CHANGED = WM_APP + 1;
 static constexpr UINT WM_APP_DEFAULT_DEVICE_CHANGED = WM_APP + 2;
 static constexpr UINT WM_APP_TRAYICON = WM_APP + 3;
+static constexpr UINT WM_APP_SUSPEND_WEBVIEW = WM_APP + 4;
 static constexpr UINT kTrayIconId = 1;
 static constexpr UINT kTrayMenuShow = 40001;
 static constexpr UINT kTrayMenuExit = 40002;
@@ -412,6 +413,7 @@ private:
     DefaultDeviceNotificationClient* defaultDeviceClient_ = nullptr;
     NOTIFYICONDATAW nid_ = {};
     bool trayEnabled_ = false;
+    bool webViewCreating_ = false;
 
     void initializeDeviceNotifications() {
         if (deviceEnumerator_) return;
@@ -449,9 +451,15 @@ private:
     }
 
     void restoreFromTray() {
+        resumeWebView();
         ShowWindow(hwnd_, SW_SHOW);
         ShowWindow(hwnd_, SW_RESTORE);
         SetForegroundWindow(hwnd_);
+        if (controller_) {
+            RECT bounds;
+            GetClientRect(hwnd_, &bounds);
+            controller_->put_Bounds(bounds);
+        }
     }
 
     void showTrayMenu() {
@@ -482,6 +490,12 @@ private:
                 L"Error", MB_OK | MB_ICONERROR);
             return false;
         }
+        return createWebViewInstance();
+    }
+
+    bool createWebViewInstance() {
+        if (!wv2Dll_) return false;
+        if (webViewCreating_ || webView_) return true;
 
         typedef HRESULT(STDMETHODCALLTYPE* PFN_CreateEnv)(
             PCWSTR, PCWSTR, ICoreWebView2EnvironmentOptions*,
@@ -492,6 +506,8 @@ private:
                 L"Error", MB_OK | MB_ICONERROR);
             return false;
         }
+
+        webViewCreating_ = true;
 
         // User data directory
         wchar_t exePath[MAX_PATH];
@@ -504,6 +520,7 @@ private:
         auto envHandler = new EnvCompletedHandler(
             [this](HRESULT hr, ICoreWebView2Environment* env) {
                 if (FAILED(hr) || !env) {
+                    webViewCreating_ = false;
                     MessageBoxW(hwnd_, L"Failed to create WebView2 environment.",
                         L"Error", MB_OK | MB_ICONERROR);
                     return;
@@ -513,6 +530,7 @@ private:
                     new CtrlCompletedHandler(
                         [this](HRESULT hr2, ICoreWebView2Controller* ctrl) {
                             if (FAILED(hr2) || !ctrl) {
+                                webViewCreating_ = false;
                                 MessageBoxW(hwnd_, L"Failed to create WebView2 controller.",
                                     L"Error", MB_OK | MB_ICONERROR);
                                 return;
@@ -530,6 +548,7 @@ private:
                             // Get ICoreWebView2
                             HRESULT hr3 = ctrl->get_CoreWebView2(&webView_);
                             if (FAILED(hr3) || !webView_) {
+                                webViewCreating_ = false;
                                 MessageBoxW(hwnd_, L"Failed to get CoreWebView2.",
                                     L"Error", MB_OK | MB_ICONERROR);
                                 return;
@@ -561,11 +580,39 @@ private:
                             // Navigate to embedded HTML
                             std::wstring htmlW = Utf8ToWide(kHtmlContent);
                             webView_->NavigateToString(htmlW.c_str());
+                            webViewCreating_ = false;
                         }));
             });
 
-        pCreateEnv(nullptr, userDataDir.c_str(), nullptr, envHandler);
+        HRESULT hr = pCreateEnv(nullptr, userDataDir.c_str(), nullptr, envHandler);
+        if (FAILED(hr)) {
+            webViewCreating_ = false;
+            return false;
+        }
         return true;
+    }
+
+    // 释放 WebView2（含浏览器子进程），保留已加载的 loader DLL
+    void suspendWebView() {
+        if (webView_ && msgToken_.value != 0) {
+            webView_->remove_WebMessageReceived(msgToken_);
+            msgToken_ = {};
+        }
+        if (controller_) {
+            controller_->Close();
+            controller_->Release();
+            controller_ = nullptr;
+        }
+        if (webView_) {
+            webView_->Release();
+            webView_ = nullptr;
+        }
+    }
+
+    // 从托盘恢复时重建 WebView2
+    void resumeWebView() {
+        if (webView_ || webViewCreating_) return;
+        createWebViewInstance();
     }
 
     void onWebMessage(ICoreWebView2WebMessageReceivedEventArgs* args) {
@@ -600,6 +647,9 @@ private:
         if (type == "refresh_devices") {
             auto devs = engine_.enumerateDevices();
             sendDeviceList(devs, msg["silent"].asBool());
+            // WebView 可能是从托盘恢复后重建的，同步运行状态与托盘开关
+            sendStatus(engine_.isRunning());
+            sendTrayState(trayEnabled_);
         }
         else if (type == "start") {
             std::vector<DeviceConfig> configs;
@@ -683,6 +733,8 @@ private:
             } else if (action == "close") {
                 if (trayEnabled_) {
                     ShowWindow(hwnd_, SW_HIDE);
+                    // 延迟到消息循环再销毁 WebView，避免在其消息回调内重入释放
+                    PostMessageW(hwnd_, WM_APP_SUSPEND_WEBVIEW, 0, 0);
                 } else {
                     SendMessageW(hwnd_, WM_CLOSE, 0, 0);
                 }
@@ -805,19 +857,7 @@ private:
         }
         volumeManager_.shutdown();
         engine_.stop();
-        if (webView_ && msgToken_.value != 0) {
-            webView_->remove_WebMessageReceived(msgToken_);
-            msgToken_ = {};
-        }
-        if (controller_) {
-            controller_->Close();
-            controller_->Release();
-            controller_ = nullptr;
-        }
-        if (webView_) {
-            webView_->Release();
-            webView_ = nullptr;
-        }
+        suspendWebView();
         if (wv2Dll_) {
             FreeLibrary(wv2Dll_);
             wv2Dll_ = nullptr;
@@ -878,6 +918,15 @@ private:
                 app->restoreFromTray();
             } else if (LOWORD(lParam) == WM_RBUTTONUP) {
                 app->showTrayMenu();
+            }
+            return 0;
+        }
+
+        case WM_APP_SUSPEND_WEBVIEW: {
+            if (!app) break;
+            // 仅当窗口仍处于隐藏（在托盘）时才释放，避免刚恢复又被销毁
+            if (!IsWindowVisible(hwnd)) {
+                app->suspendWebView();
             }
             return 0;
         }
