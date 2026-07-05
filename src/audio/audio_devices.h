@@ -1,7 +1,6 @@
 #pragma once
 
 #include "wasapi_output.h"
-#include <mmdeviceapi.h>
 #include <string>
 #include <vector>
 

@@ -266,37 +266,46 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   var devices = [];
   var stateById = {};
 
-  // 频段双拖柄：统一 20Hz~20000Hz 对数轴；0=最左, 100=最右
+  // 频段双拖柄：统一 20Hz~20000Hz 对数轴
+  // 视觉位置用 0~BAND_STEPS 对数分度；真实频率存在拖柄的 data-hz 上，支持逐 1Hz 精调
   var BAND = { min: 20, max: 20000 };
-  var BAND_MIN_GAP = 10;   // 两拖柄最小间隔(位置单位, 约1个八度)
+  var BAND_STEPS = 1000;      // 视觉位置分度(越大鼠标拖动越顺滑)
+  var BAND_MIN_RATIO = 1.1;   // 两边界最小频率比，防止交叉成陷波
   function posToFreq(pos) {
-    pos = Math.max(0, Math.min(100, pos));
-    return BAND.min * Math.pow(BAND.max / BAND.min, pos / 100);
+    pos = Math.max(0, Math.min(BAND_STEPS, pos));
+    return BAND.min * Math.pow(BAND.max / BAND.min, pos / BAND_STEPS);
   }
   function freqToPos(hz) {
     if (hz <= BAND.min) return 0;
-    if (hz >= BAND.max) return 100;
-    return Math.round(100 * Math.log(hz / BAND.min) / Math.log(BAND.max / BAND.min));
+    if (hz >= BAND.max) return BAND_STEPS;
+    return Math.round(BAND_STEPS * Math.log(hz / BAND.min) / Math.log(BAND.max / BAND.min));
   }
-  // 低边界拖柄 -> hpf: 拉到最左(20Hz)表示关闭高通
-  function lowPosToHpf(pos) {
-    if (pos <= 0) return 0;
-    return Math.round(posToFreq(pos));
+  function clampHz(hz) {
+    return Math.max(BAND.min, Math.min(BAND.max, Math.round(hz)));
   }
-  // 高边界拖柄 -> lpf: 拉到最右(20000Hz)表示关闭低通
-  function highPosToLpf(pos) {
-    if (pos >= 100) return 0;
-    return Math.round(posToFreq(pos));
-  }
-  function hpfToLowPos(hz) {
-    return hz <= 0 ? 0 : freqToPos(hz);
-  }
-  function lpfToHighPos(hz) {
-    return hz <= 0 ? 100 : freqToPos(hz);
-  }
+  // 从拖柄 data-hz 派生 hpf/lpf：低边界拖到最左(20Hz)=关闭高通；高边界拖到最右(20000Hz)=关闭低通
+  function lowHzToHpf(hz) { return hz <= BAND.min ? 0 : Math.round(hz); }
+  function highHzToLpf(hz) { return hz >= BAND.max ? 0 : Math.round(hz); }
   function fmtFreq(hz) {
     if (hz <= 0) return 'OFF';
     return Math.round(hz) + ' Hz';
+  }
+  // 写入某个拖柄的频率(带约束)，同步更新视觉位置与整个频段显示
+  function setBandHz(card, input, isLow, newHz) {
+    var low = card.querySelector('.band-low');
+    var high = card.querySelector('.band-high');
+    if (!low || !high) return;
+    newHz = clampHz(newHz);
+    var otherHz = parseFloat((isLow ? high : low).dataset.hz);
+    if (isLow) {
+      if (newHz > otherHz / BAND_MIN_RATIO) newHz = Math.round(otherHz / BAND_MIN_RATIO);
+    } else {
+      if (newHz < otherHz * BAND_MIN_RATIO) newHz = Math.round(otherHz * BAND_MIN_RATIO);
+    }
+    newHz = clampHz(newHz);
+    input.dataset.hz = newHz;
+    input.value = freqToPos(newHz);
+    updateBand(card);
   }
 
   // 动态设置滑块的渐变填充和下方值标签位置
@@ -318,30 +327,32 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     }
   }
 
-  // 更新频段双拖柄：填充条位置、拖柄标签、状态文本；同时保证 low<=high 视觉
+  // 更新频段双拖柄：填充条位置、拖柄标签、状态文本；真值取自 data-hz
   function updateBand(card) {
     var low = card.querySelector('.band-low');
     var high = card.querySelector('.band-high');
     if (!low || !high) return;
-    var lo = parseInt(low.value);
-    var hi = parseInt(high.value);
+    var loHz = parseFloat(low.dataset.hz);
+    var hiHz = parseFloat(high.dataset.hz);
+    var loPct = freqToPos(loHz) / BAND_STEPS * 100;
+    var hiPct = freqToPos(hiHz) / BAND_STEPS * 100;
     var fill = card.querySelector('.band-fill');
     if (fill) {
-      fill.style.left = lo + '%';
-      fill.style.width = (hi - lo) + '%';
+      fill.style.left = loPct + '%';
+      fill.style.width = (hiPct - loPct) + '%';
     }
-    var hpf = lowPosToHpf(lo);
-    var lpf = highPosToLpf(hi);
+    var hpf = lowHzToHpf(loHz);
+    var lpf = highHzToLpf(hiHz);
     var loBelow = card.querySelector('.band-low-below');
     var hiBelow = card.querySelector('.band-high-below');
     if (loBelow) {
       loBelow.textContent = fmtFreq(hpf);
-      loBelow.style.left = lo + '%';
+      loBelow.style.left = loPct + '%';
       loBelow.style.opacity = hpf > 0 ? '1' : '0';
     }
     if (hiBelow) {
       hiBelow.textContent = fmtFreq(lpf);
-      hiBelow.style.left = hi + '%';
+      hiBelow.style.left = hiPct + '%';
       hiBelow.style.opacity = lpf > 0 ? '1' : '0';
     }
     var state = card.querySelector('.band-val');
@@ -392,8 +403,10 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var muted = !!dev.muted;
       var prev = previous[dev.id];
       var enabled = dev.isDefault ? false : (prev ? prev.enabled : true);
-      var lowPos = !dev.isDefault && prev ? hpfToLowPos(prev.hpf) : 0;
-      var highPos = !dev.isDefault && prev ? lpfToHighPos(prev.lpf) : 100;
+      var lowHz = !dev.isDefault && prev && prev.hpf > 0 ? prev.hpf : BAND.min;
+      var highHz = !dev.isDefault && prev && prev.lpf > 0 ? prev.lpf : BAND.max;
+      var lowPos = freqToPos(lowHz);
+      var highPos = freqToPos(highHz);
       card.dataset.muted = muted ? 'true' : 'false';
       var statusText = dev.isDefault ? '默认捕获源' : '已连接';
       var enableHtml = dev.isDefault ? '' : '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>';
@@ -408,8 +421,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
             '<div class="band-slider">' +
               '<div class="band-track"></div>' +
               '<div class="band-fill"></div>' +
-              '<input type="range" class="band-low" min="0" max="100" value="' + lowPos + '">' +
-              '<input type="range" class="band-high" min="0" max="100" value="' + highPos + '">' +
+              '<input type="range" class="band-low" min="0" max="' + BAND_STEPS + '" value="' + lowPos + '" data-hz="' + lowHz + '" title="拖动粗调，聚焦后方向键±1Hz，Shift+方向键±100Hz">' +
+              '<input type="range" class="band-high" min="0" max="' + BAND_STEPS + '" value="' + highPos + '" data-hz="' + highHz + '" title="拖动粗调，聚焦后方向键±1Hz，Shift+方向键±100Hz">' +
               '<span class="band-below band-low-below" style="left:0%;opacity:0">OFF</span>' +
               '<span class="band-below band-high-below" style="left:100%;opacity:0">OFF</span>' +
             '</div>' +
@@ -444,20 +457,30 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
         sendUpdateDebounced(dev.id);
       });
       if (bandLow && bandHigh) {
+        // 鼠标拖动：视觉位置(对数)转成频率，经 setBandHz 约束后回写 data-hz
         bandLow.addEventListener('input', function() {
-          var lo = parseInt(this.value);
-          var hi = parseInt(bandHigh.value);
-          if (lo > hi - BAND_MIN_GAP) { lo = hi - BAND_MIN_GAP; this.value = lo; }
-          updateBand(card);
+          setBandHz(card, this, true, posToFreq(parseInt(this.value)));
           sendUpdateDebounced(dev.id);
         });
         bandHigh.addEventListener('input', function() {
-          var hi = parseInt(this.value);
-          var lo = parseInt(bandLow.value);
-          if (hi < lo + BAND_MIN_GAP) { hi = lo + BAND_MIN_GAP; this.value = hi; }
-          updateBand(card);
+          setBandHz(card, this, false, posToFreq(parseInt(this.value)));
           sendUpdateDebounced(dev.id);
         });
+        // 键盘微调：方向键 ±1Hz，Shift+方向键 ±100Hz（真正逐 Hz 精调）
+        function bandKey(input, isLow) {
+          input.addEventListener('keydown', function(e) {
+            var dir = (e.key === 'ArrowRight' || e.key === 'ArrowUp') ? 1
+                    : (e.key === 'ArrowLeft' || e.key === 'ArrowDown') ? -1 : 0;
+            if (!dir) return;
+            e.preventDefault();
+            var step = e.shiftKey ? 100 : 1;
+            var cur = parseFloat(input.dataset.hz);
+            setBandHz(card, input, isLow, cur + dir * step);
+            sendUpdateDebounced(dev.id);
+          });
+        }
+        bandKey(bandLow, true);
+        bandKey(bandHigh, false);
       }
       var enableBox = card.querySelector('.dev-enable');
       if (enableBox) {
@@ -538,8 +561,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       enabled: isDefault ? false : !!(enableBox && enableBox.checked),
       volume: parseInt(card.querySelector('.vol-slider').value),
       muted: card.dataset.muted === 'true',
-      hpf: isDefault || !bandLow ? 0 : lowPosToHpf(parseInt(bandLow.value)),
-      lpf: isDefault || !bandHigh ? 0 : highPosToLpf(parseInt(bandHigh.value))
+      hpf: isDefault || !bandLow ? 0 : lowHzToHpf(parseFloat(bandLow.dataset.hz)),
+      lpf: isDefault || !bandHigh ? 0 : highHzToLpf(parseFloat(bandHigh.dataset.hz))
     };
   }
 

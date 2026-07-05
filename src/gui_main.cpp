@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <windowsx.h>
 #include <dwmapi.h>
 #include <mmdeviceapi.h>
 #include <WebView2.h>
@@ -7,7 +6,6 @@
 #include <vector>
 #include <functional>
 #include <algorithm>
-#include <objbase.h>
 #include <utility>
 #include "app_common.h"
 #include "audio_devices.h"
