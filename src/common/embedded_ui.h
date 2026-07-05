@@ -142,6 +142,13 @@ body::before{
 .vol-icon:hover{color:var(--accent2);transform:scale(1.08)}
 .vol-icon.muted{color:var(--red)}
 .vol-slider{flex:1;min-width:0}
+/* 音量滑块仿频段滑块：轨道透明，用独立 .vol-track/.vol-fill 显示灰底与紫色填充 */
+.vol-slider-wrap{position:relative;flex:1;min-width:0;height:20px;display:flex;align-items:center}
+.vol-track{position:absolute;top:50%;left:0;right:0;height:5px;transform:translateY(-50%);border-radius:3px;background:#2a2a4a;pointer-events:none}
+.vol-fill{position:absolute;top:50%;left:0;height:5px;transform:translateY(-50%);border-radius:3px;background:linear-gradient(90deg,#5a2bff 0%,#9d72ff 100%);pointer-events:none}
+.vol-slider-wrap input[type=range]{position:absolute;top:0;left:0;width:100%;height:20px;margin:0;background:transparent !important}
+.vol-slider-wrap input[type=range]::-webkit-slider-runnable-track{height:20px;background:transparent}
+.vol-slider-wrap input[type=range]::-webkit-slider-thumb{margin-top:0}
 .vol-pct{font-size:15px;font-weight:700;color:var(--accent2);min-width:52px;text-align:right;letter-spacing:0.3px;flex-shrink:0}
 
 /* Filter Rows */
@@ -316,22 +323,22 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     updateBand(card);
   }
 
-  // 动态设置滑块的渐变填充和下方值标签位置
+  // 动态设置滑块的填充宽度和下方值标签位置
   function updateSlider(el) {
     var mn = parseFloat(el.min), mx = parseFloat(el.max), v = parseFloat(el.value);
     var pct = ((v - mn) / (mx - mn)) * 100;
-    el.style.background = 'transparent';
-    // WebKit track 通过 element style 改 runnable-track 需要伪元素，我们用 JS设置渐变样式在主元素的 background linear-gradient 上
-    // 因为 ::-webkit-slider-runnable-track 无法直接设置，改用一种技巧：给input本身设置渐变背景
-    el.style.setProperty('background', 'linear-gradient(90deg, #5a2bff 0%, #9d72ff ' + pct + '%, #2a2a4a ' + pct + '%, #1a1a35 100%)', 'important');
+    // 仿频段滑块：填充由独立的 .vol-fill 显示，input 轨道透明
+    var wrap = el.closest('.vol-slider-wrap');
+    if (wrap) {
+      var fill = wrap.querySelector('.vol-fill');
+      if (fill) fill.style.width = pct + '%';
+    }
     // 更新下方值标签位置
     var card = el.closest('.device-card');
     if (!card) return;
     var label = card.querySelector('.' + el.dataset.labelTarget);
     if (label) {
-      var rect = el.getBoundingClientRect();
-      var px = pct;
-      label.style.left = px + '%';
+      label.style.left = pct + '%';
     }
   }
 
@@ -447,7 +454,11 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           '</div>' +
           '<div class="vol-area">' +
             '<span class="vol-icon">&#128266;</span>' +
-            '<input type="range" class="vol-slider slider-main" min="0" max="100" value="' + volume + '">' +
+            '<div class="vol-slider-wrap">' +
+              '<div class="vol-track"></div>' +
+              '<div class="vol-fill"></div>' +
+              '<input type="range" class="vol-slider slider-main" min="0" max="100" value="' + volume + '">' +
+            '</div>' +
             '<span class="vol-pct">' + volume + '%</span>' +
           '</div>' +
         '</div>' + filterHtml;
