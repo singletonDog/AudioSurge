@@ -206,7 +206,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 .status-text.running{color:var(--green);font-weight:600}
 
 /* Toast */
-.toast{position:fixed;top:20px;right:20px;padding:12px 24px;border-radius:var(--radius-md);color:#fff;font-size:13px;z-index:9999;animation:slideIn 0.3s ease;pointer-events:none;font-weight:500;letter-spacing:0.3px;backdrop-filter:blur(10px)}
+.toast-stack{position:fixed;top:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;align-items:flex-end;pointer-events:none}
+.toast{padding:12px 24px;border-radius:var(--radius-md);color:#fff;font-size:13px;animation:slideIn 0.3s ease;pointer-events:none;font-weight:500;letter-spacing:0.3px;backdrop-filter:blur(10px)}
 .toast.error{background:rgba(230,57,70,0.92);box-shadow:0 4px 20px rgba(230,57,70,0.4), 0 2px 6px rgba(0,0,0,0.3)}
 .toast.info{background:rgba(109,59,255,0.92);box-shadow:0 4px 20px rgba(109,59,255,0.4), 0 2px 6px rgba(0,0,0,0.3)}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -404,11 +405,24 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   }
 
   function showToast(msg, type) {
+    var stack = document.getElementById('toastStack');
+    if (!stack) {
+      stack = document.createElement('div');
+      stack.id = 'toastStack';
+      stack.className = 'toast-stack';
+      document.body.appendChild(stack);
+    }
+    // 只显示一条：新消息直接顶掉之前的
+    stack.innerHTML = '';
     var t = document.createElement('div');
     t.className = 'toast ' + (type || 'info');
     t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(function(){ t.style.animation='fadeOut .3s ease'; setTimeout(function(){ t.remove(); },300); }, 2500);
+    stack.appendChild(t);
+    setTimeout(function(){
+      if (t.parentNode !== stack) return;
+      t.style.animation='fadeOut .3s ease';
+      setTimeout(function(){ if (t.parentNode === stack) t.remove(); },300);
+    }, 2500);
   }
 
   function renderDevices(list) {
@@ -443,7 +457,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var lowPos = freqToPos(lowHz);
       var highPos = freqToPos(highHz);
       card.dataset.muted = muted ? 'true' : 'false';
-      var statusText = dev.isDefault ? '默认捕获源' : '已连接';
+      var statusText = dev.isDefault ? '默认设备' : '已连接';
       var enableHtml = dev.isDefault ? '' : '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>';
       var filterHtml = dev.isDefault ? '' :
         '<div class="filter-row">' +

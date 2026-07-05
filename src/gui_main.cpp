@@ -414,6 +414,7 @@ private:
     AppState appState_;
     IMMDeviceEnumerator* deviceEnumerator_ = nullptr;
     DefaultDeviceNotificationClient* defaultDeviceClient_ = nullptr;
+    std::string lastDefaultDeviceId_;
     NOTIFYICONDATAW nid_ = {};
     bool trayEnabled_ = false;
     bool webViewCreating_ = false;
@@ -423,6 +424,7 @@ private:
         HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                                       __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&deviceEnumerator_));
         if (FAILED(hr) || !deviceEnumerator_) return;
+        lastDefaultDeviceId_ = GetDefaultRenderDeviceId();
         defaultDeviceClient_ = new DefaultDeviceNotificationClient([this]() {
             PostMessageW(hwnd_, WM_APP_DEFAULT_DEVICE_CHANGED, 0, 0);
         });
@@ -718,12 +720,11 @@ private:
         }
         else if (type == "set_default_device") {
             std::string deviceId = msg["deviceId"].asString();
-            std::string name = msg["name"].asString();
             std::string error;
             if (!SetDefaultRenderDevice(deviceId, &error)) {
                 sendError(error.empty() ? "切换默认输出设备失败" : error);
             } else {
-                showInfo(DeviceLabel(name, deviceId) + " 已设为默认输出设备");
+                // 成功提示交给默认设备变化回调统一弹出，避免重复
                 auto devs = engine_.enumerateDevices();
                 sendDeviceList(devs, true);
             }
@@ -805,28 +806,16 @@ private:
         }
         json += "]}";
 
-        // 用 ExecuteScript 直接调用 JS 函数（最可靠的方式）
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
-
-        // 也用 PostWebMessageAsJson 发送
         sendMessage(json);
     }
 
     void sendStatus(bool running) {
         std::string json = std::string("{\"type\":\"status\",\"running\":") + (running ? "true" : "false") + "}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
     void sendTrayState(bool enabled) {
         std::string json = std::string("{\"type\":\"tray_state\",\"enabled\":") + (enabled ? "true" : "false") + "}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
 
     void sendVolumeUpdate(const std::string& deviceId, int volume, bool muted) {
@@ -834,34 +823,22 @@ private:
                            "\",\"volume\":" + std::to_string(ClampVolume(volume)) +
                            ",\"muted\":" + (muted ? "true" : "false") + "}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
 
     void sendDeviceEnabled(const std::string& deviceId, bool enabled) {
         std::string json = "{\"type\":\"device_enabled\",\"deviceId\":\"" + EscapeJson(deviceId) +
                            "\",\"enabled\":" + (enabled ? "true" : "false") + "}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
 
     void sendError(const std::string& message) {
         std::string json = "{\"type\":\"error\",\"message\":\"" + EscapeJson(message) + "\"}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
 
     void showInfo(const std::string& message) {
         std::string json = "{\"type\":\"info\",\"message\":\"" + EscapeJson(message) + "\"}";
         sendMessage(json);
-        std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                            + Utf8ToWide(json) + L");}";
-        executeScript(script);
     }
 
     void sendMessage(const std::string& json) {
@@ -969,13 +946,19 @@ private:
 
         case WM_APP_DEFAULT_DEVICE_CHANGED: {
             if (!app) break;
+            // Windows 对同一次切换可能重复回调，仅当默认设备真正变化时才处理
+            std::string currentDefaultId = GetDefaultRenderDeviceId();
+            if (currentDefaultId == app->lastDefaultDeviceId_) {
+                return 0;
+            }
+            app->lastDefaultDeviceId_ = currentDefaultId;
             bool wasRunning = app->engine_.isRunning();
             if (wasRunning && !app->engine_.restartForDefaultDeviceChange()) {
-                std::string message = app->engine_.getLastError().empty() ? "默认捕获设备切换失败" : app->engine_.getLastError();
+                std::string message = app->engine_.getLastError().empty() ? "默认设备切换失败" : app->engine_.getLastError();
                 app->sendError(message);
             } else if (wasRunning) {
                 app->sendStatus(true);
-                app->showInfo("默认捕获设备已跟随系统切换");
+                app->showInfo("默认设备已切换");
             }
             auto devs = app->engine_.enumerateDevices();
             app->sendDeviceList(devs, true);
@@ -997,9 +980,6 @@ private:
             std::string json = std::string("{\"type\":\"window_state\",\"maximized\":")
                              + (maximized ? "true" : "false") + "}";
             app->sendMessage(json);
-            std::wstring script = L"if(typeof handleNativeMessage==='function'){handleNativeMessage("
-                                + Utf8ToWide(json) + L");}";
-            app->executeScript(script);
             return 0;
         }
 
