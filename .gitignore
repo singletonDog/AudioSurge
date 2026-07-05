@@ -8,7 +8,6 @@ cmake-build-debug/
 *.o
 *.a
 *.lib
-*.dll
 
 # CMake 缓存
 CMakeCache.txt

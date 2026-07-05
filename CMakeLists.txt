@@ -45,6 +45,14 @@ target_link_libraries(AudioFlux
 
 target_compile_definitions(AudioFlux PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
 
+# 构建后把 WebView2Loader.dll 拷到可执行文件输出目录，方便直接分发运行
+add_custom_command(TARGET AudioFlux POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/include/WebView2Loader.dll
+        $<TARGET_FILE_DIR:AudioFlux>/WebView2Loader.dll
+    COMMENT "Copying WebView2Loader.dll to output directory"
+)
+
 # MinGW 需要 -municode 支持 wWinMain 入口
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(AudioFlux PRIVATE -municode)
