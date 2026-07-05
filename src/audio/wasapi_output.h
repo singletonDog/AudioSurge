@@ -58,8 +58,8 @@ private:
         float b0 = 0, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
         float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
 
-        void setHPF(float fc, float fs);   // 2阶 Butterworth 高通
-        void setLPF(float fc, float fs);   // 2阶 Butterworth 低通
+        void setHPF(float fc, float fs);   // 2阶 Butterworth 高通 (-12dB/oct)
+        void setLPF(float fc, float fs);   // 2阶 Butterworth 低通 (-12dB/oct)
         void reset();                      // 清零状态
         float process(float x);            // Direct Form I
     };
@@ -84,9 +84,9 @@ private:
         // 音量平滑过渡：当前音量缩放因子，渲染线程专用（无需原子）
         float current_vol_scale = 1.0f;
 
-        // HPF/LPF 4阶 = 2级级联 biquad [stage][channel]
-        BiquadFilter hpf_filters[2][MAX_CHANNELS];
-        BiquadFilter lpf_filters[2][MAX_CHANNELS];
+        // HPF/LPF 单级 2阶 biquad (-12dB/oct) [channel]
+        BiquadFilter hpf_filters[MAX_CHANNELS];
+        BiquadFilter lpf_filters[MAX_CHANNELS];
     };
 
     void renderThread(RenderStream* stream);

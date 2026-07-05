@@ -254,14 +254,12 @@ bool WasapiOutput::createStream(IMMDevice* device, const std::string& id,
 
     // 设置初始滤波器系数
     if (hpf_hz > 0) {
-        for (int s = 0; s < 2; ++s)
-            for (int ch = 0; ch < channels_; ++ch)
-                stream->hpf_filters[s][ch].setHPF((float)hpf_hz, (float)sample_rate_);
+        for (int ch = 0; ch < channels_; ++ch)
+            stream->hpf_filters[ch].setHPF((float)hpf_hz, (float)sample_rate_);
     }
     if (lpf_hz > 0) {
-        for (int s = 0; s < 2; ++s)
-            for (int ch = 0; ch < channels_; ++ch)
-                stream->lpf_filters[s][ch].setLPF((float)lpf_hz, (float)sample_rate_);
+        for (int ch = 0; ch < channels_; ++ch)
+            stream->lpf_filters[ch].setLPF((float)lpf_hz, (float)sample_rate_);
     }
 
     // 启动渲染线程
@@ -296,34 +294,26 @@ void WasapiOutput::renderThread(RenderStream* stream) {
         int vol = stream->volume.load(std::memory_order_acquire);
         float target_vol_scale = vol / 100.0f;
 
-        // 参数变化时重新计算 biquad 系数并重置状态
+        // 参数变化时重新计算 biquad 系数
+        // 换系数时保留滤波器历史状态，避免拖动滑块产生咔哒/爆音
+        // 仅在从 OFF(=0) 打开时 reset 一次
         if (hpf != prev_hpf) {
             if (hpf > 0) {
                 float safe_hpf = ClampFilterHz(hpf, sample_rate_);
-                for (int s = 0; s < 2; ++s)
-                    for (int ch = 0; ch < channels_; ++ch) {
-                        stream->hpf_filters[s][ch].reset();
-                        stream->hpf_filters[s][ch].setHPF(safe_hpf, (float)sample_rate_);
-                    }
-            } else {
-                for (int s = 0; s < 2; ++s)
-                    for (int ch = 0; ch < channels_; ++ch)
-                        stream->hpf_filters[s][ch].reset();
+                for (int ch = 0; ch < channels_; ++ch) {
+                    if (prev_hpf <= 0) stream->hpf_filters[ch].reset();
+                    stream->hpf_filters[ch].setHPF(safe_hpf, (float)sample_rate_);
+                }
             }
             prev_hpf = hpf;
         }
         if (lpf != prev_lpf) {
             if (lpf > 0) {
                 float safe_lpf = ClampFilterHz(lpf, sample_rate_);
-                for (int s = 0; s < 2; ++s)
-                    for (int ch = 0; ch < channels_; ++ch) {
-                        stream->lpf_filters[s][ch].reset();
-                        stream->lpf_filters[s][ch].setLPF(safe_lpf, (float)sample_rate_);
-                    }
-            } else {
-                for (int s = 0; s < 2; ++s)
-                    for (int ch = 0; ch < channels_; ++ch)
-                        stream->lpf_filters[s][ch].reset();
+                for (int ch = 0; ch < channels_; ++ch) {
+                    if (prev_lpf <= 0) stream->lpf_filters[ch].reset();
+                    stream->lpf_filters[ch].setLPF(safe_lpf, (float)sample_rate_);
+                }
             }
             prev_lpf = lpf;
         }
@@ -364,15 +354,13 @@ void WasapiOutput::renderThread(RenderStream* stream) {
                 size_t idx = i * channels_ + ch;
                 float v = samples[idx];
 
-                // HPF: 2级级联 = 4阶 Butterworth
+                // HPF: 单级 2阶 Butterworth (-12dB/oct)
                 if (hpf > 0) {
-                    v = stream->hpf_filters[0][ch].process(v);
-                    v = stream->hpf_filters[1][ch].process(v);
+                    v = stream->hpf_filters[ch].process(v);
                 }
-                // LPF: 2级级联 = 4阶 Butterworth
+                // LPF: 单级 2阶 Butterworth (-12dB/oct)
                 if (lpf > 0) {
-                    v = stream->lpf_filters[0][ch].process(v);
-                    v = stream->lpf_filters[1][ch].process(v);
+                    v = stream->lpf_filters[ch].process(v);
                 }
                 // 音量缩放
                 v *= vol_scale;

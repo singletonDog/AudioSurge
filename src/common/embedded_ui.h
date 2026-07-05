@@ -255,19 +255,22 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   var devices = [];
   var stateById = {};
 
-  // 滑块位置 (1-100) 映射到频率 (20Hz-20kHz)，对数刻度；0=关闭
-  function sliderToFreq(pos) {
+  // 滑块位置 (1-100) 对数映射到频率；0=关闭
+  // 收窄到常用范围，让整条行程都有明显听感变化
+  var FILTER_RANGE = { hpf: { min: 20, max: 2000 }, lpf: { min: 500, max: 20000 } };
+  function sliderToFreq(pos, kind) {
     if (pos <= 0) return 0;
-    return 20 * Math.pow(1000, (pos - 1) / 99);
+    var r = FILTER_RANGE[kind];
+    return r.min * Math.pow(r.max / r.min, (pos - 1) / 99);
   }
-  function freqToSlider(hz) {
+  function freqToSlider(hz, kind) {
     if (hz <= 0) return 0;
-    return Math.round(1 + 99 * Math.log10(hz / 20) / 3);
+    var r = FILTER_RANGE[kind];
+    return Math.round(1 + 99 * Math.log(hz / r.min) / Math.log(r.max / r.min));
   }
   function fmtFreq(hz) {
     if (hz <= 0) return 'OFF';
-    if (hz < 1000) return Math.round(hz) + ' Hz';
-    return (hz / 1000).toFixed(1) + ' kHz';
+    return Math.round(hz) + ' Hz';
   }
 
   // 动态设置滑块的渐变填充和下方值标签位置
@@ -319,8 +322,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var muted = !!dev.muted;
       var prev = previous[dev.id];
       var enabled = dev.isDefault ? false : (prev ? prev.enabled : true);
-      var hpfPos = !dev.isDefault && prev ? freqToSlider(prev.hpf) : 0;
-      var lpfPos = !dev.isDefault && prev ? freqToSlider(prev.lpf) : 0;
+      var hpfPos = !dev.isDefault && prev ? freqToSlider(prev.hpf, 'hpf') : 0;
+      var lpfPos = !dev.isDefault && prev ? freqToSlider(prev.lpf, 'lpf') : 0;
       card.dataset.muted = muted ? 'true' : 'false';
       var statusText = dev.isDefault ? '默认捕获源' : '已连接';
       var enableHtml = dev.isDefault ? '' : '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>';
@@ -336,7 +339,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
               '<input type="range" class="hpf-slider" min="0" max="100" value="' + hpfPos + '" data-label-target="hpf-under">' +
               '<span class="slider-value-below hpf-under" style="left:0%;opacity:0">0Hz</span>' +
             '</div>' +
-            '<span class="slider-label right">20kHz</span>' +
+            '<span class="slider-label right">2000Hz</span>' +
           '</div>' +
         '</div>' +
         '<div class="filter-row">' +
@@ -345,12 +348,12 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
             '<div class="filter-state lpf-val off">OFF</div>' +
           '</div>' +
           '<div class="slider-wrap">' +
-            '<span class="slider-label">20Hz</span>' +
+            '<span class="slider-label">500Hz</span>' +
             '<div class="slider-main">' +
               '<input type="range" class="lpf-slider" min="0" max="100" value="' + lpfPos + '" data-label-target="lpf-under">' +
               '<span class="slider-value-below lpf-under" style="left:0%;opacity:0">0Hz</span>' +
             '</div>' +
-            '<span class="slider-label right">20kHz</span>' +
+            '<span class="slider-label right">20000Hz</span>' +
           '</div>' +
         '</div>';
       card.innerHTML =
@@ -383,7 +386,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       });
       if (hpfSlider) {
         hpfSlider.addEventListener('input', function() {
-          var f = sliderToFreq(parseInt(this.value));
+          var f = sliderToFreq(parseInt(this.value), 'hpf');
           var el = card.querySelector('.hpf-val');
           var under = card.querySelector('.hpf-under');
           el.textContent = fmtFreq(f);
@@ -400,7 +403,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       }
       if (lpfSlider) {
         lpfSlider.addEventListener('input', function() {
-          var f = sliderToFreq(parseInt(this.value));
+          var f = sliderToFreq(parseInt(this.value), 'lpf');
           var el = card.querySelector('.lpf-val');
           var under = card.querySelector('.lpf-under');
           el.textContent = fmtFreq(f);
@@ -494,8 +497,8 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       enabled: isDefault ? false : !!(enableBox && enableBox.checked),
       volume: parseInt(card.querySelector('.vol-slider').value),
       muted: card.dataset.muted === 'true',
-      hpf: isDefault || !hpfSlider ? 0 : Math.round(sliderToFreq(parseInt(hpfSlider.value))),
-      lpf: isDefault || !lpfSlider ? 0 : Math.round(sliderToFreq(parseInt(lpfSlider.value)))
+      hpf: isDefault || !hpfSlider ? 0 : Math.round(sliderToFreq(parseInt(hpfSlider.value), 'hpf')),
+      lpf: isDefault || !lpfSlider ? 0 : Math.round(sliderToFreq(parseInt(lpfSlider.value), 'lpf'))
     };
   }
 
