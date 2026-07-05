@@ -19,6 +19,11 @@ public:
 
     // 写入数据（捕获线程调用），无锁
     void write(const float* data, size_t count) {
+        // 防御：单次写入量不应超过容量，超出则只保留最新部分，避免越界
+        if (count > capacity_) {
+            data += (count - capacity_);
+            count = capacity_;
+        }
         size_t wp = write_pos_.load(std::memory_order_relaxed);
         // 分两段写入（处理环绕）
         size_t first = (std::min)(count, capacity_ - wp);
@@ -32,6 +37,8 @@ public:
     // 非阻塞读取（渲染线程调用），每个读者维护自己的 read_pos
     // jumped: 可选输出参数，如果读取位置被跳跃调整则为true
     size_t read(float* data, size_t count, size_t& read_pos, bool* jumped = nullptr) {
+        // 防御：读取量不应超过容量，避免跳跃分支下溢
+        if (count > capacity_) count = capacity_;
         // acquire 语义：确保读到最新写入的数据
         size_t wp = write_pos_.load(std::memory_order_acquire);
         size_t available = (wp >= read_pos) ? (wp - read_pos) : (capacity_ - read_pos + wp);

@@ -238,7 +238,12 @@ private:
         while (p < s.size() && isdigit((unsigned char)s[p])) ++p;
         if (p < s.size() && s[p] == '.') { ++p; while (p < s.size() && isdigit((unsigned char)s[p])) ++p; }
         if (p < s.size() && (s[p]=='e'||s[p]=='E')) { ++p; if (p<s.size()&&(s[p]=='+'||s[p]=='-')) ++p; while (p<s.size()&&isdigit((unsigned char)s[p])) ++p; }
-        return JsonVal(std::stod(s.substr(st, p - st)));
+        if (p == st) return JsonVal();
+        try {
+            return JsonVal(std::stod(s.substr(st, p - st)));
+        } catch (...) {
+            return JsonVal();
+        }
     }
 
     static JsonVal parseBool(const std::string& s, size_t& p) {
@@ -417,7 +422,9 @@ public:
             event->device_id = deviceId;
             event->volume = volume;
             event->muted = muted;
-            PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event));
+            if (!PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event))) {
+                delete event;
+            }
         });
         initializeDeviceNotifications();
         appState_.load();
