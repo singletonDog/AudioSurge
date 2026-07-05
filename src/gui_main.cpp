@@ -367,6 +367,7 @@ public:
             PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event));
         });
         initializeDeviceNotifications();
+        enableTray();
 
         // 标准无边框窗口做法：保留系统阴影和 Aero Snap，但不把 DWM frame 扩进客户区
         BOOL darkMode = TRUE;

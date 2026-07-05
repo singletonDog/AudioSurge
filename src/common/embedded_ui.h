@@ -274,7 +274,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       <div class="settings-row">
         <span class="row-label">系统托盘图标</span>
         <label class="switch">
-          <input type="checkbox" id="trayToggle">
+          <input type="checkbox" id="trayToggle" checked>
           <span class="track"></span>
         </label>
       </div>
