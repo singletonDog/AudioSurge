@@ -16,6 +16,7 @@ add_executable(AudioFlux WIN32
     src/system/system_volume.cpp
     src/audio/wasapi_capture.cpp
     src/audio/wasapi_output.cpp
+    src/common/app_state.cpp
     src/app.rc
 )
 

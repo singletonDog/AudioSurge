@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <utility>
 #include "app_common.h"
+#include "app_state.h"
 #include "audio_devices.h"
 #include "audio_engine.h"
 #include "embedded_ui.h"
@@ -369,7 +370,8 @@ public:
             PostMessageW(hwnd_, WM_APP_VOLUME_CHANGED, 0, reinterpret_cast<LPARAM>(event));
         });
         initializeDeviceNotifications();
-        enableTray();
+        appState_.load();
+        if (appState_.trayEnabled()) enableTray();
 
         // 标准无边框窗口做法：保留系统阴影和 Aero Snap，但不把 DWM frame 扩进客户区
         BOOL darkMode = TRUE;
@@ -409,6 +411,7 @@ private:
     HMODULE wv2Dll_ = nullptr;
     AudioEngine engine_;
     SystemVolumeManager volumeManager_;
+    AppState appState_;
     IMMDeviceEnumerator* deviceEnumerator_ = nullptr;
     DefaultDeviceNotificationClient* defaultDeviceClient_ = nullptr;
     NOTIFYICONDATAW nid_ = {};
@@ -672,6 +675,14 @@ private:
             } else {
                 sendStatus(true);
             }
+            for (const auto& dc : configs) {
+                DeviceState st;
+                st.enabled = dc.enabled;
+                st.hpf = static_cast<int>(dc.hpf_hz);
+                st.lpf = static_cast<int>(dc.lpf_hz);
+                appState_.setDevice(dc.id, st);
+            }
+            appState_.save();
         }
         else if (type == "stop") {
             engine_.stop();
@@ -698,6 +709,12 @@ private:
             } else if (result.device_stopped) {
                 showInfo(DeviceLabel(dc.name, dc.id) + " 已停止");
             }
+            DeviceState st;
+            st.enabled = dc.enabled;
+            st.hpf = static_cast<int>(dc.hpf_hz);
+            st.lpf = static_cast<int>(dc.lpf_hz);
+            appState_.setDevice(dc.id, st);
+            appState_.save();
         }
         else if (type == "set_default_device") {
             std::string deviceId = msg["deviceId"].asString();
@@ -718,6 +735,8 @@ private:
             } else {
                 disableTray();
             }
+            appState_.setTrayEnabled(trayEnabled_);
+            appState_.save();
             sendTrayState(trayEnabled_);
         }
         else if (type == "window_control") {
@@ -775,7 +794,14 @@ private:
                     "\",\"name\":\"" + EscapeJson(devs[i].name) +
                     "\",\"isDefault\":" + (devs[i].is_default ? "true" : "false") +
                     ",\"volume\":" + std::to_string(ClampVolume(devs[i].volume)) +
-                    ",\"muted\":" + (devs[i].muted ? "true" : "false") + "}";
+                    ",\"muted\":" + (devs[i].muted ? "true" : "false");
+            if (appState_.hasDevice(devs[i].id)) {
+                DeviceState st = appState_.getDevice(devs[i].id);
+                json += ",\"savedEnabled\":" + std::string(st.enabled ? "true" : "false") +
+                        ",\"savedHpf\":" + std::to_string(st.hpf) +
+                        ",\"savedLpf\":" + std::to_string(st.lpf);
+            }
+            json += "}";
         }
         json += "]}";
 

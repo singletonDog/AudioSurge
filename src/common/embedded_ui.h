@@ -432,9 +432,14 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var volume = typeof dev.volume === 'number' ? dev.volume : 100;
       var muted = !!dev.muted;
       var prev = previous[dev.id];
-      var enabled = dev.isDefault ? false : (prev ? prev.enabled : true);
-      var lowHz = !dev.isDefault && prev && prev.hpf > 0 ? prev.hpf : BAND.min;
-      var highHz = !dev.isDefault && prev && prev.lpf > 0 ? prev.lpf : BAND.max;
+      var savedEnabled = typeof dev.savedEnabled === 'boolean' ? dev.savedEnabled : true;
+      var savedHpf = typeof dev.savedHpf === 'number' ? dev.savedHpf : 0;
+      var savedLpf = typeof dev.savedLpf === 'number' ? dev.savedLpf : 0;
+      var enabled = dev.isDefault ? false : (prev ? prev.enabled : savedEnabled);
+      var lowHz = !dev.isDefault && prev && prev.hpf > 0 ? prev.hpf
+                : (!dev.isDefault && savedHpf > 0 ? savedHpf : BAND.min);
+      var highHz = !dev.isDefault && prev && prev.lpf > 0 ? prev.lpf
+                 : (!dev.isDefault && savedLpf > 0 ? savedLpf : BAND.max);
       var lowPos = freqToPos(lowHz);
       var highPos = freqToPos(highHz);
       card.dataset.muted = muted ? 'true' : 'false';
