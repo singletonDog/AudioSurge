@@ -46,6 +46,7 @@ bool AudioEngine::startRuntime(const std::vector<DeviceConfig>& devices, bool al
     Sleep(50);
 
     int ok = 0;
+    int enabledCount = 0;
     std::vector<std::string> errors;
     std::string defaultDeviceId = GetDefaultRenderDeviceId();
     std::vector<DeviceConfig> sanitized = devices;
@@ -57,6 +58,7 @@ bool AudioEngine::startRuntime(const std::vector<DeviceConfig>& devices, bool al
             continue;
         }
         if (dc.enabled) {
+            ++enabledCount;
             if (output_->startDevice(dc.id, dc.hpf_hz, dc.lpf_hz, 100)) {
                 ++ok;
             } else {
@@ -67,7 +69,8 @@ bool AudioEngine::startRuntime(const std::vector<DeviceConfig>& devices, bool al
     if (!errors.empty()) {
         last_error_ = errors.front();
     }
-    if (ok == 0 && !allowNoOutputs) {
+    // 有启用设备但全部启动失败才算失败；未启用任何设备时允许空运行，待用户勾选后动态启动
+    if (ok == 0 && enabledCount > 0 && !allowNoOutputs) {
         if (last_error_.empty()) last_error_ = "没有可用的输出设备启动成功";
         capture_->stop();
         delete output_; output_ = nullptr;
