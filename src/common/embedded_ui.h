@@ -281,6 +281,13 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
           <span class="track"></span>
         </label>
       </div>
+      <div class="settings-row" style="margin-top:14px">
+        <span class="row-label">开机自动运行</span>
+        <label class="switch">
+          <input type="checkbox" id="autoStartToggle">
+          <span class="track"></span>
+        </label>
+      </div>
     </div>
     <div class="status-row">
       <span class="status-dot-small stopped" id="statusDot"></span>
@@ -710,6 +717,9 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
         case 'tray_state':
           applyTrayState(data.enabled);
           break;
+        case 'autostart_state':
+          applyAutoStartState(data.enabled);
+          break;
         case 'volume_changed':
           applyNativeVolume(data.deviceId, data.volume, data.muted);
           break;
@@ -792,9 +802,14 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   var settingsBtn = document.getElementById('settingsBtn');
   var settingsPanel = document.getElementById('settingsPanel');
   var trayToggle = document.getElementById('trayToggle');
+  var autoStartToggle = document.getElementById('autoStartToggle');
 
   function applyTrayState(enabled) {
     if (trayToggle) trayToggle.checked = !!enabled;
+  }
+
+  function applyAutoStartState(enabled) {
+    if (autoStartToggle) autoStartToggle.checked = !!enabled;
   }
 
   if (settingsBtn && settingsPanel) {
@@ -811,6 +826,12 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   if (trayToggle) {
     trayToggle.addEventListener('change', function() {
       sendMsg({type:'set_tray', enabled: trayToggle.checked});
+    });
+  }
+
+  if (autoStartToggle) {
+    autoStartToggle.addEventListener('change', function() {
+      sendMsg({type:'set_autostart', enabled: autoStartToggle.checked});
     });
   }
 

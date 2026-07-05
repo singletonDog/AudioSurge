@@ -47,6 +47,55 @@ struct VolumeChangedEvent {
     bool muted = false;
 };
 
+// ============================================================================
+//  开机自启动（HKCU\...\CurrentVersion\Run）
+// ============================================================================
+
+static const wchar_t* kAutoStartRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t* kAutoStartValueName = L"AudioFlux";
+
+// 返回带 --autostart 标志的自启动命令行，形如："C:\path\AudioFlux.exe" --autostart
+static std::wstring BuildAutoStartCommand() {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring cmd = L"\"";
+    cmd += exePath;
+    cmd += L"\" --autostart";
+    return cmd;
+}
+
+static bool IsAutoStartEnabled() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kAutoStartRunKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG r = RegQueryValueExW(key, kAutoStartValueName, nullptr, &type, nullptr, &size);
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ);
+}
+
+static bool SetAutoStart(bool enabled) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kAutoStartRunKey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    LONG r;
+    if (enabled) {
+        std::wstring cmd = BuildAutoStartCommand();
+        r = RegSetValueExW(key, kAutoStartValueName, 0, REG_SZ,
+                           reinterpret_cast<const BYTE*>(cmd.c_str()),
+                           static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+    } else {
+        r = RegDeleteValueW(key, kAutoStartValueName);
+        // 值不存在也视为成功（目标状态已达成）
+        if (r == ERROR_FILE_NOT_FOUND) r = ERROR_SUCCESS;
+    }
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS;
+}
+
 class DefaultDeviceNotificationClient : public IMMNotificationClient {
 public:
     using Callback = std::function<void()>;
@@ -319,8 +368,9 @@ private:
 
 class App {
 public:
-    bool init(HINSTANCE hInst) {
+    bool init(HINSTANCE hInst, bool silent = false) {
         hInstance_ = hInst;
+        silent_ = silent;
 
         // DPI awareness
         HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
@@ -388,12 +438,19 @@ public:
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
+        if (silent_) {
+            // 开机自启：读取本地保存配置后直接后台运行，不创建 WebView2 界面
+            autoStartForwarding();
+            return true;
+        }
         return initWebView();
     }
 
     int run() {
-        ShowWindow(hwnd_, SW_SHOW);
-        UpdateWindow(hwnd_);
+        if (!silent_) {
+            ShowWindow(hwnd_, SW_SHOW);
+            UpdateWindow(hwnd_);
+        }
         MSG msg;
         while (GetMessageW(&msg, nullptr, 0, 0)) {
             TranslateMessage(&msg);
@@ -418,6 +475,7 @@ private:
     NOTIFYICONDATAW nid_ = {};
     bool trayEnabled_ = false;
     bool webViewCreating_ = false;
+    bool silent_ = false;
 
     void initializeDeviceNotifications() {
         if (deviceEnumerator_) return;
@@ -431,6 +489,33 @@ private:
         if (FAILED(deviceEnumerator_->RegisterEndpointNotificationCallback(defaultDeviceClient_))) {
             defaultDeviceClient_->Release();
             defaultDeviceClient_ = nullptr;
+        }
+    }
+
+    // 开机自启：读取本地保存的已启用设备，直接后台开始音频转发
+    void autoStartForwarding() {
+        auto devs = engine_.enumerateDevices();
+        std::string defaultDeviceId = GetDefaultRenderDeviceId();
+        std::vector<DeviceConfig> configs;
+        for (const auto& dev : devs) {
+            if (!appState_.hasDevice(dev.id)) continue;
+            DeviceState st = appState_.getDevice(dev.id);
+            DeviceConfig dc;
+            dc.id = dev.id;
+            dc.name = dev.name;
+            // 默认输出设备是捕获源，不作为转发目标
+            dc.enabled = dev.id != defaultDeviceId && st.enabled;
+            dc.hpf_hz = dev.id == defaultDeviceId ? 0.0f : static_cast<float>(st.hpf);
+            dc.lpf_hz = dev.id == defaultDeviceId ? 0.0f : static_cast<float>(st.lpf);
+            dc.volume = dev.volume;
+            configs.push_back(dc);
+        }
+        bool anyEnabled = false;
+        for (const auto& dc : configs) {
+            if (dc.enabled) { anyEnabled = true; break; }
+        }
+        if (anyEnabled) {
+            engine_.start(configs);
         }
     }
 
@@ -655,6 +740,7 @@ private:
             // WebView 可能是从托盘恢复后重建的，同步运行状态与托盘开关
             sendStatus(engine_.isRunning());
             sendTrayState(trayEnabled_);
+            sendAutoStartState(IsAutoStartEnabled());
         }
         else if (type == "start") {
             std::vector<DeviceConfig> configs;
@@ -740,6 +826,18 @@ private:
             appState_.save();
             sendTrayState(trayEnabled_);
         }
+        else if (type == "set_autostart") {
+            bool enabled = msg["enabled"].asBool();
+            bool ok = SetAutoStart(enabled);
+            if (!ok) {
+                sendError(enabled ? "开机自动运行设置失败" : "取消开机自动运行失败");
+            }
+            // 以注册表实际状态为准
+            bool actual = IsAutoStartEnabled();
+            appState_.setAutoStartEnabled(actual);
+            appState_.save();
+            sendAutoStartState(actual);
+        }
         else if (type == "window_control") {
             std::string action = msg["action"].asString();
             if (action == "minimize") {
@@ -815,6 +913,10 @@ private:
     }
     void sendTrayState(bool enabled) {
         std::string json = std::string("{\"type\":\"tray_state\",\"enabled\":") + (enabled ? "true" : "false") + "}";
+        sendMessage(json);
+    }
+    void sendAutoStartState(bool enabled) {
+        std::string json = std::string("{\"type\":\"autostart_state\",\"enabled\":") + (enabled ? "true" : "false") + "}";
         sendMessage(json);
     }
 
@@ -1013,8 +1115,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+    // 开机自启动会带 --autostart 标志：静默后台运行，不显示界面
+    bool silent = wcsstr(GetCommandLineW(), L"--autostart") != nullptr;
+
     App app;
-    if (!app.init(hInstance)) {
+    if (!app.init(hInstance, silent)) {
         CoUninitialize();
         if (instanceMutex) CloseHandle(instanceMutex);
         return 1;

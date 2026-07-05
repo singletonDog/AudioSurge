@@ -19,14 +19,20 @@ public:
     bool trayEnabled() const { return tray_enabled_; }
     void setTrayEnabled(bool enabled);
 
+    bool autoStartEnabled() const { return auto_start_enabled_; }
+    void setAutoStartEnabled(bool enabled);
+
     bool hasDevice(const std::string& id) const;
     DeviceState getDevice(const std::string& id) const;
     void setDevice(const std::string& id, const DeviceState& state);
+
+    const std::map<std::string, DeviceState>& devices() const { return devices_; }
 
 private:
     std::wstring filePath() const;
 
     bool tray_enabled_ = true;
+    bool auto_start_enabled_ = false;
     std::map<std::string, DeviceState> devices_;
     bool loaded_ = false;
 };

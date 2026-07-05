@@ -139,6 +139,9 @@ void AppState::load() {
         if (const JVal* tray = settings->find("trayEnabled")) {
             tray_enabled_ = tray->asBool(tray_enabled_);
         }
+        if (const JVal* autoStart = settings->find("autoStartEnabled")) {
+            auto_start_enabled_ = autoStart->asBool(auto_start_enabled_);
+        }
     }
     if (const JVal* devices = root.find("devices")) {
         if (devices->isObj()) {
@@ -159,6 +162,8 @@ void AppState::save() const {
     std::string json = "{\n  \"version\": 1,\n";
     json += "  \"settings\": { \"trayEnabled\": ";
     json += tray_enabled_ ? "true" : "false";
+    json += ", \"autoStartEnabled\": ";
+    json += auto_start_enabled_ ? "true" : "false";
     json += " },\n";
     json += "  \"devices\": {";
     bool first = true;
@@ -181,6 +186,10 @@ void AppState::save() const {
 
 void AppState::setTrayEnabled(bool enabled) {
     tray_enabled_ = enabled;
+}
+
+void AppState::setAutoStartEnabled(bool enabled) {
+    auto_start_enabled_ = enabled;
 }
 
 bool AppState::hasDevice(const std::string& id) const {
