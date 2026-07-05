@@ -22,7 +22,13 @@ AudioFlux 是一个 Windows C++17 桌面音频应用。
 - WASAPI Render Client 将捕获到的音频输出到多个选中的输出设备。
 - 一个无锁共享 float 音频环形缓冲区连接捕获线程和渲染线程。
 - `SystemVolumeManager` 同步每个输出设备的系统音量和静音状态。
-- CMake 构建 GUI 可执行程序。
+- `AppState` 将设备选中/滤波器状态和全局设置持久化到 exe 同目录 JSON 文件。
+- 系统托盘图标：关闭窗口可最小化到托盘，托盘菜单可显示/退出。
+- 开机自启动（HKCU Run 键 + `--autostart` 静默后台运行）。
+- 命名 Mutex 单实例：再次启动时唤回已运行实例。
+- 隐藏到托盘/后台时挂起（释放）WebView2 以降低内存占用，恢复时重建。
+- 内嵌应用图标资源（`src/app.rc` + `assets/audioflux.ico`）。
+- CMake 构建 GUI 可执行程序（默认 Release，含体积优化与 DLL 拷贝）。
 
 高层数据流：
 
@@ -45,11 +51,19 @@ WebView2 UI
 ```text
 d:\Project\audio
 ├─ CMakeLists.txt
+├─ assets/
+│  ├─ audioflux.ico
+│  └─ audioflux.png
+├─ tools/
+│  └─ embed_logo.py
 ├─ include/
 │  ├─ WebView2.h
-│  └─ WebView2EnvironmentOptions.h
+│  ├─ WebView2EnvironmentOptions.h
+│  └─ WebView2Loader.dll
 └─ src/
    ├─ gui_main.cpp
+   ├─ app.rc
+   ├─ resource.h
    ├─ audio/
    │  ├─ audio_devices.h
    │  ├─ audio_devices.cpp
@@ -62,6 +76,8 @@ d:\Project\audio
    │  └─ wasapi_output.cpp
    ├─ common/
    │  ├─ app_common.h
+   │  ├─ app_state.h
+   │  ├─ app_state.cpp
    │  └─ embedded_ui.h
    └─ system/
       ├─ system_volume.h
@@ -92,6 +108,8 @@ add_executable(AudioFlux WIN32
     src/system/system_volume.cpp
     src/audio/wasapi_capture.cpp
     src/audio/wasapi_output.cpp
+    src/common/app_state.cpp
+    src/app.rc
 )
 
 target_include_directories(AudioFlux PRIVATE
@@ -105,8 +123,11 @@ target_include_directories(AudioFlux PRIVATE
 重要配置：
 
 - C++ 标准：C++17。
+- 默认构建类型：未指定时强制为 `Release`，便于体积/性能优化。
 - GUI 入口：`src/gui_main.cpp` 中的 `wWinMain`。
 - WebView2 头文件来自 `include/`。
+- 资源编译：`src/app.rc` 内嵌 `assets/audioflux.ico`（`IDI_APPICON`）；通过 `set_source_files_properties(... OBJECT_DEPENDS ...)` 让图标变化触发重编。
+- 构建后 POST_BUILD 自动把 `include/WebView2Loader.dll` 拷到可执行文件输出目录，便于直接分发运行。
 - 链接的 Windows 库：
   - `ole32`
   - `oleaut32`
@@ -115,11 +136,12 @@ target_include_directories(AudioFlux PRIVATE
   - `user32`
   - `gdi32`
   - `dwmapi`
+  - `advapi32`（注册表开机自启动）
 - 编译定义：
   - `_WIN32_WINNT=0x0A00`
   - `UNICODE`
   - `_UNICODE`
-- MinGW 构建时使用 `-municode`。
+- MinGW 构建时使用 `-municode`；Release 下额外启用体积优化（`-Os -ffunction-sections -fdata-sections` + `-Wl,--gc-sections -s`）。
 
 推荐验证命令：
 
@@ -144,12 +166,21 @@ cmake --build build
 
 - 创建 Win32 窗口和自定义无边框窗口行为。
 - 设置 DWM 深色模式、边框颜色、标题颜色和圆角偏好。
+- 加载应用图标（`IDI_APPICON`）并设置窗口图标。
 - 动态加载并初始化 WebView2。
 - 处理 JS 与原生 C++ 的消息桥接。
-- 协调 `AudioEngine`、`SystemVolumeManager` 和 WebView2 UI。
+- 协调 `AudioEngine`、`SystemVolumeManager`、`AppState` 和 WebView2 UI。
+- 加载/保存本地持久化状态（设备启用/HPF/LPF、托盘与自启开关）。
 - 注册默认输出设备变化监听。
+- 管理系统托盘图标（`enableTray`/`disableTray`/`showTrayMenu`/`restoreFromTray`）。
+- 管理开机自启动注册表项（`IsAutoStartEnabled`/`SetAutoStart`/`BuildAutoStartCommand`）。
+- 命名 Mutex 单实例检测 + 广播唤起消息（`AudioFluxShowInstanceMsg`）。
+- 隐藏到托盘/后台时挂起 WebView2（`suspendWebView`），恢复时重建（`resumeWebView`）。
+- `--autostart` 静默模式：不建 WebView，直接按保存配置后台转发（`autoStartForwarding`）。
 - 使用 `WM_APP_VOLUME_CHANGED` 将系统音量回调派发回 UI 线程。
 - 使用 `WM_APP_DEFAULT_DEVICE_CHANGED` 处理系统默认输出设备变化。
+- 使用 `WM_APP_TRAYICON` 处理托盘图标鼠标事件。
+- 使用 `WM_APP_SUSPEND_WEBVIEW` 延迟释放 WebView2，避免消息回调内重入。
 - 处理窗口拖动、缩放、最小化、最大化、关闭。
 
 重要类型/区域：
@@ -158,8 +189,11 @@ cmake --build build
 - `DefaultDeviceNotificationClient`：监听默认输出设备变化。
 - `JsonVal`：用于解析 JS 消息的极简 JSON 解析器。
 - `EnvCompletedHandler`、`CtrlCompletedHandler`、`MsgReceivedHandler`：WebView2 COM 回调辅助类。
-- `App`：原生应用协调器。
-- `wWinMain`：GUI 入口点。
+- `App`：原生应用协调器（持有 `AppState appState_`、托盘 `NOTIFYICONDATAW`、`silent_` 等状态）。
+- 自启动辅助：`kAutoStartRunKey`、`kAutoStartValueName`、`BuildAutoStartCommand`、`IsAutoStartEnabled`、`SetAutoStart`。
+- 托盘常量：`kTrayIconId`、`kTrayMenuShow`、`kTrayMenuExit`。
+- `g_showInstanceMsg`：单实例唤起用的注册窗口消息。
+- `wWinMain`：GUI 入口点（含单实例 Mutex 与 `--autostart` 判断）。
 
 JS 到 C++ 消息流：
 
@@ -180,20 +214,25 @@ App::executeScript("handleNativeMessage(...)")
 
 重要 JS 消息类型：
 
-- `refresh_devices`：手动刷新输出设备列表。
-- `start`：启动捕获和选中的输出设备。
+- `refresh_devices`：手动刷新输出设备列表（并同步运行状态、托盘、自启开关）。
+- `start`：启动捕获和选中的输出设备（并把设备状态写入 `AppState` 持久化）。
 - `stop`：停止音频运行时。
-- `device_update`：更新某个设备的启用状态、HPF/LPF、系统音量/静音。
+- `device_update`：更新某个设备的启用状态、HPF/LPF、系统音量/静音（并持久化）。
 - `set_default_device`：将某设备设为 Windows 默认输出设备（双击设备图标触发），间接切换捕获源。
-- `window_control`：最小化、最大化、关闭、拖动、缩放。
+- `set_tray`：开启/关闭系统托盘功能（并持久化）。
+- `set_autostart`：开启/关闭开机自启动（写 HKCU Run 键，并持久化）。
+- `window_control`：最小化、最大化(`toggle_max`)、关闭、后台(`background`)、退出(`exit`)、拖动、边缘缩放(`resize_*`)。
+- `debug`：JS 调试消息，生产环境静默忽略。
 
 重要原生到 JS 的消息类型：
 
-- `device_list`：活跃渲染设备列表，包含 id/name/isDefault/volume/muted。
+- `device_list`：活跃渲染设备列表，包含 id/name/isDefault/volume/muted，及持久化的 savedEnabled/savedHpf/savedLpf；顶层带 silent/running。
 - `status`：运行时启动/停止状态。
 - `window_state`：最大化/还原状态。
 - `volume_changed`：外部系统端点音量或静音变化。
 - `device_enabled`：原生侧修正某设备启用状态。
+- `tray_state`：当前托盘开关状态。
+- `autostart_state`：当前开机自启动状态。
 - `info`：普通提示。
 - `error`：toast 错误提示。
 
@@ -215,6 +254,9 @@ static const char* kHtmlContent = R"html(... )html";
 - 单个“通过频段”双拖柄控件（合并原 HPF/LPF 两条滑块）。
 - 双击设备图标将其设为默认输出设备。
 - 默认捕获源风险提示。
+- 设置面板（齿轮按钮）：托盘开关、开机自启开关。
+- 后台运行按钮（隐藏窗口并释放 WebView）。
+- 从保存状态（savedEnabled/savedHpf/savedLpf）恢复设备选中与滤波器。
 - JS 到原生的 `sendMsg` 协议。
 - 原生到 JS 的 `handleNativeMessage` 协议。
 
@@ -222,7 +264,7 @@ static const char* kHtmlContent = R"html(... )html";
 
 重点查找：
 
-- `renderDevices(list)`：设备卡片 DOM 结构（含频段双拖柄）。
+- `renderDevices(list)`：设备卡片 DOM 结构（含频段双拖柄）；读取 `savedEnabled`/`savedHpf`/`savedLpf` 恢复状态。
 - `getDevState(id)`：JS 状态序列化，从拖柄 `data-hz` 派生 `hpf`/`lpf`。
 - `sendUpdate(id)` / `sendUpdateDebounced(id)`：JS 到原生的设备更新。
 - `refreshDevices(silent)`：手动刷新设备。
@@ -231,7 +273,10 @@ static const char* kHtmlContent = R"html(... )html";
 - `updateBand(card)`：更新填充条、拖柄标签、频段状态文本。
 - `applyNativeVolume(id, volume, muted)`：应用系统音量变化。
 - `applyDeviceEnabled(id, enabled)`：应用原生侧设备启用状态修正。
-- `handleNativeMessage(data)`：原生消息分发。
+- `applyTrayState(enabled)` / `applyAutoStartState(enabled)`：同步设置面板开关状态。
+- 设置面板元素：`settingsBtn` / `settingsPanel` / 托盘开关 / 自启开关；`set_tray` / `set_autostart` 消息发送。
+- 后台按钮：发送 `{type:'window_control', action:'background'}`。
+- `handleNativeMessage(data)`：原生消息分发（含 `tray_state`/`autostart_state`）。
 
 #### 频段双拖柄（HPF/LPF 合并控件）
 
@@ -398,6 +443,51 @@ Windows 到 AudioFlux UI：
 
 旧的 WASAPI 捕获/输出模块仍有部分原始 COM 指针和显式 `Release`，后续可逐步迁移。
 
+### `src/common/app_state.h` / `src/common/app_state.cpp`
+
+这个模块负责应用本地状态持久化，数据以 JSON 存放在 exe 同目录的 `AudioFlux.state.json`（与 `WebView2Data` 相邻）。
+
+主要职责：
+
+- 定义 `DeviceState`（`enabled` / `hpf` / `lpf`）。
+- 保存/读取每设备的启用状态与 HPF/LPF 频率。
+- 保存/读取全局设置：托盘开关（`trayEnabled`）、开机自启开关（`autoStartEnabled`）。
+- 内置极简 JSON 解析器（仅用于读取本模块自身写出的文件）。
+
+主类：
+
+```cpp
+class AppState
+```
+
+重要方法：
+
+- `load()` / `save()`
+- `trayEnabled()` / `setTrayEnabled(bool)`
+- `autoStartEnabled()` / `setAutoStartEnabled(bool)`
+- `hasDevice(const std::string& id)`
+- `getDevice(const std::string& id)` / `setDevice(const std::string& id, const DeviceState&)`
+- `devices()`
+
+使用要点：
+
+- `src/gui_main.cpp` 在 `App::init` 中调用 `appState_.load()`，并在 `start` / `device_update` / `set_tray` / `set_autostart` 后调用 `save()`。
+- `sendDeviceList` 会把持久化的设备状态作为 `savedEnabled`/`savedHpf`/`savedLpf` 附加到 `device_list` 消息，供 UI 恢复选中/滤波器状态。
+- `--autostart` 静默模式下，`autoStartForwarding` 直接读取 `AppState` 里已启用的设备开始后台转发。
+
+注意：`AppState` 内的 `autoStartEnabled` 与实际的 HKCU Run 注册表项分开存储；`set_autostart` 处理以注册表实际状态（`IsAutoStartEnabled`）为准回写。
+
+### `src/app.rc` / `src/resource.h` / `assets/`
+
+应用图标资源。
+
+- `src/resource.h`：定义 `IDI_APPICON`（值 101）。
+- `src/app.rc`：`IDI_APPICON ICON "../assets/audioflux.ico"`。
+- `assets/audioflux.ico`：窗口标题栏、任务栏和托盘图标来源。
+- `assets/audioflux.png`：图标源图；`tools/embed_logo.py` 为相关的辅助脚本（生成/嵌入 logo）。
+
+`src/gui_main.cpp` 通过 `LoadIconW(hInstance_, MAKEINTRESOURCEW(IDI_APPICON))` 加载图标用于窗口和托盘。
+
 ### `src/audio/wasapi_capture.h` / `src/audio/wasapi_capture.cpp`
 
 这个模块实现从 Windows 当前默认输出设备进行 Loopback 捕获。
@@ -539,16 +629,23 @@ class SharedAudioBuffer
 
 ```text
 wWinMain
+  -> RegisterWindowMessageW("AudioFluxShowInstanceMsg")
+  -> CreateMutexW 单实例检测（已存在则广播唤起消息并退出）
   -> CoInitializeEx
-  -> App::init
+  -> 解析命令行是否含 --autostart（silent）
+  -> App::init(hInstance, silent)
        -> SetProcessDpiAwarenessContext
        -> RegisterClassW
        -> CreateWindowExW
+       -> 设置窗口图标（IDI_APPICON）
        -> 初始化 SystemVolumeManager
        -> 注册默认设备变化监听
+       -> appState_.load()
+       -> 若 trayEnabled 则 enableTray()
        -> DWM 样式设置
-       -> initWebView
-  -> App::run 消息循环
+       -> silent ? autoStartForwarding()（后台转发，不建 WebView）
+                 : initWebView()
+  -> App::run 消息循环（silent 时不 ShowWindow）
 ```
 
 ### WebView 启动
@@ -556,11 +653,14 @@ wWinMain
 ```text
 App::initWebView
   -> LoadLibraryW("WebView2Loader.dll")
-  -> CreateCoreWebView2EnvironmentWithOptions
-  -> CreateCoreWebView2Controller
-  -> 配置透明背景和 settings
-  -> NavigateToString(kHtmlContent)
+  -> createWebViewInstance()
+       -> CreateCoreWebView2EnvironmentWithOptions
+       -> CreateCoreWebView2Controller
+       -> 配置透明背景和 settings
+       -> NavigateToString(kHtmlContent)
 ```
+
+从托盘/后台恢复时通过 `resumeWebView()` 复用 `createWebViewInstance()` 重建 WebView2。
 
 ### 音频启动
 
@@ -617,6 +717,51 @@ Windows 默认输出设备变化
 ```
 
 当前策略：默认设备变化时按当前配置重启音频链路，因此切换瞬间可能有短暂停顿。
+
+### 托盘与后台运行
+
+```text
+关闭按钮（trayEnabled=true）或后台按钮
+  -> window_control (close / background)
+  -> ShowWindow(SW_HIDE)
+  -> PostMessageW(WM_APP_SUSPEND_WEBVIEW)
+  -> App::suspendWebView（释放 WebView2 及浏览器子进程）
+  -> SetProcessWorkingSetSize 回收工作集
+
+托盘图标点击/双击
+  -> WM_APP_TRAYICON
+  -> App::restoreFromTray
+       -> resumeWebView()（重建 WebView2）
+       -> ShowWindow / SetForegroundWindow
+
+托盘右键菜单
+  -> App::showTrayMenu（显示窗口 / 退出）
+```
+
+注意：音频链路（AudioEngine）在挂起 WebView 期间继续运行，转发不中断。
+
+### 单实例唤起
+
+```text
+再次启动 AudioFlux.exe
+  -> CreateMutexW 检测到已存在实例
+  -> PostMessageW(HWND_BROADCAST, AudioFluxShowInstanceMsg)
+  -> 已运行实例 WndProc 收到 g_showInstanceMsg
+  -> 恢复并前置窗口
+  -> 新进程退出
+```
+
+### 开机自启动（静默后台）
+
+```text
+系统登录 -> 运行 "AudioFlux.exe" --autostart
+  -> wWinMain silent=true
+  -> App::init 不创建 WebView
+  -> autoStartForwarding()
+       -> enumerateDevices
+       -> 读取 AppState 中已启用设备
+       -> 若有启用设备则 AudioEngine::start
+```
 
 ## 常见修改位置
 
@@ -745,6 +890,46 @@ Windows 默认输出设备变化
 - `src/gui_main.cpp` 中的 `WM_APP_DEFAULT_DEVICE_CHANGED` 分支
 - `src/audio/audio_engine.cpp` 中的 `AudioEngine::restartForDefaultDeviceChange`
 
+### 修改状态持久化（设备状态/设置）
+
+编辑：
+
+- `src/common/app_state.h` / `src/common/app_state.cpp`：`DeviceState`、字段读写、JSON 结构、文件路径。
+- `src/gui_main.cpp`：`appState_.load()` 调用时机、`start`/`device_update`/`set_tray`/`set_autostart` 后的 `save()`、`sendDeviceList` 中 `savedEnabled`/`savedHpf`/`savedLpf` 附加逻辑。
+- `src/common/embedded_ui.h`：`renderDevices` 中读取 saved* 恢复 UI 状态。
+
+如果新增需要持久化的字段，通常要同时改 `app_state`、`sendDeviceList` 序列化和 UI 读取。
+
+### 修改系统托盘 / 后台运行 / WebView 挂起恢复
+
+编辑：
+
+- `src/gui_main.cpp`：`enableTray` / `disableTray` / `showTrayMenu` / `restoreFromTray`、`suspendWebView` / `resumeWebView`、`WM_APP_TRAYICON` / `WM_APP_SUSPEND_WEBVIEW` 分支、`window_control` 的 `close`/`background`/`exit` 分支。
+- `src/common/embedded_ui.h`：设置面板托盘开关、后台按钮、`set_tray` 消息与 `tray_state` 处理（`applyTrayState`）。
+- 托盘常量：`kTrayIconId`、`kTrayMenuShow`、`kTrayMenuExit`。
+
+### 修改开机自启动
+
+编辑：
+
+- `src/gui_main.cpp`：`kAutoStartRunKey`、`kAutoStartValueName`、`BuildAutoStartCommand`、`IsAutoStartEnabled`、`SetAutoStart`、`set_autostart` 分支、`--autostart` 判断与 `autoStartForwarding`。
+- `src/common/embedded_ui.h`：设置面板自启开关、`set_autostart` 消息与 `autostart_state` 处理（`applyAutoStartState`）。
+- 链接库需保留 `advapi32`（`CMakeLists.txt`）。
+
+### 修改单实例唤起
+
+编辑：
+
+- `src/gui_main.cpp`：`wWinMain` 中的 `CreateMutexW`、`g_showInstanceMsg`（`RegisterWindowMessageW`）、WndProc 中 `g_showInstanceMsg` 分支。
+
+### 修改应用图标
+
+编辑：
+
+- `assets/audioflux.ico`（图标文件本体）。
+- `src/app.rc` / `src/resource.h`（`IDI_APPICON` 引用）。
+- `CMakeLists.txt` 中 `set_source_files_properties(... OBJECT_DEPENDS ...)`（图标变化触发重编）。
+
 ### 修改公共工具、HRESULT 或 COM RAII
 
 编辑：
@@ -806,3 +991,8 @@ GUI/音频修改的手动检查项：
 - 双击设备图标能将其设为 Windows 默认输出设备。
 - 默认捕获源风险提示仍正常。
 - 窗口拖动、缩放、最小化、最大化、关闭仍正常。
+- 设备选中/HPF/LPF 状态在重启应用后能从本地状态文件恢复。
+- 设置面板托盘开关、开机自启开关能切换并持久化。
+- 开启托盘后关闭窗口能最小化到托盘；托盘点击/双击/右键菜单能恢复或退出。
+- 隐藏到托盘/后台后再次打开 exe 能唤回已运行实例（单实例）。
+- 开机自启（`--autostart`）能静默后台按保存配置转发音频，不显示界面。
