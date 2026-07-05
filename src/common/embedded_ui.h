@@ -169,6 +169,17 @@ input[type=range]:disabled{cursor:not-allowed}
 input[type=range]:disabled::-webkit-slider-thumb{background:var(--text3);box-shadow:0 0 0 2px #5a5875, 0 1px 3px rgba(0,0,0,0.3);opacity:0.65}
 input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opacity:0.6}
 
+/* Band (dual-thumb) Slider */
+.band-slider{position:relative;flex:1;height:20px}
+.band-track{position:absolute;top:50%;left:0;right:0;height:5px;transform:translateY(-50%);border-radius:3px;background:#2a2a4a}
+.band-fill{position:absolute;top:50%;height:5px;transform:translateY(-50%);border-radius:3px;background:linear-gradient(90deg,#5a2bff 0%,#9d72ff 100%);pointer-events:none}
+.band-slider input[type=range]{position:absolute;top:0;left:0;width:100%;height:20px;margin:0;background:none !important;pointer-events:none}
+.band-slider input[type=range]::-webkit-slider-runnable-track{height:20px;background:transparent}
+.band-slider input[type=range]::-webkit-slider-thumb{pointer-events:auto;margin-top:0}
+.band-slider input.band-low{z-index:3}
+.band-slider input.band-high{z-index:4}
+.band-below{position:absolute;top:20px;transform:translateX(-50%);font-size:10px;color:var(--text2);font-weight:600;white-space:nowrap;pointer-events:none;transition:left 0.05s}
+
 .bottom-bar{flex-shrink:0;padding:20px 32px 28px;display:flex;flex-direction:column;align-items:center;gap:12px;position:relative}
 .corner-btn{position:absolute;bottom:28px;width:44px;height:44px;border:1px solid rgba(109,59,255,0.35);border-radius:14px;background:rgba(37,37,73,0.72);color:var(--text2);font-size:20px;font-weight:600;cursor:pointer;transition:all 0.15s;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)}
 .corner-btn:hover{border-color:rgba(157,114,255,0.65);color:#fff;background:rgba(109,59,255,0.24);transform:translateY(-1px)}
@@ -255,18 +266,33 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
   var devices = [];
   var stateById = {};
 
-  // 滑块位置 (1-100) 对数映射到频率；0=关闭
-  // 收窄到常用范围，让整条行程都有明显听感变化
-  var FILTER_RANGE = { hpf: { min: 20, max: 2000 }, lpf: { min: 500, max: 20000 } };
-  function sliderToFreq(pos, kind) {
-    if (pos <= 0) return 0;
-    var r = FILTER_RANGE[kind];
-    return r.min * Math.pow(r.max / r.min, (pos - 1) / 99);
+  // 频段双拖柄：统一 20Hz~20000Hz 对数轴；0=最左, 100=最右
+  var BAND = { min: 20, max: 20000 };
+  var BAND_MIN_GAP = 10;   // 两拖柄最小间隔(位置单位, 约1个八度)
+  function posToFreq(pos) {
+    pos = Math.max(0, Math.min(100, pos));
+    return BAND.min * Math.pow(BAND.max / BAND.min, pos / 100);
   }
-  function freqToSlider(hz, kind) {
-    if (hz <= 0) return 0;
-    var r = FILTER_RANGE[kind];
-    return Math.round(1 + 99 * Math.log(hz / r.min) / Math.log(r.max / r.min));
+  function freqToPos(hz) {
+    if (hz <= BAND.min) return 0;
+    if (hz >= BAND.max) return 100;
+    return Math.round(100 * Math.log(hz / BAND.min) / Math.log(BAND.max / BAND.min));
+  }
+  // 低边界拖柄 -> hpf: 拉到最左(20Hz)表示关闭高通
+  function lowPosToHpf(pos) {
+    if (pos <= 0) return 0;
+    return Math.round(posToFreq(pos));
+  }
+  // 高边界拖柄 -> lpf: 拉到最右(20000Hz)表示关闭低通
+  function highPosToLpf(pos) {
+    if (pos >= 100) return 0;
+    return Math.round(posToFreq(pos));
+  }
+  function hpfToLowPos(hz) {
+    return hz <= 0 ? 0 : freqToPos(hz);
+  }
+  function lpfToHighPos(hz) {
+    return hz <= 0 ? 100 : freqToPos(hz);
   }
   function fmtFreq(hz) {
     if (hz <= 0) return 'OFF';
@@ -289,6 +315,50 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var rect = el.getBoundingClientRect();
       var px = pct;
       label.style.left = px + '%';
+    }
+  }
+
+  // 更新频段双拖柄：填充条位置、拖柄标签、状态文本；同时保证 low<=high 视觉
+  function updateBand(card) {
+    var low = card.querySelector('.band-low');
+    var high = card.querySelector('.band-high');
+    if (!low || !high) return;
+    var lo = parseInt(low.value);
+    var hi = parseInt(high.value);
+    var fill = card.querySelector('.band-fill');
+    if (fill) {
+      fill.style.left = lo + '%';
+      fill.style.width = (hi - lo) + '%';
+    }
+    var hpf = lowPosToHpf(lo);
+    var lpf = highPosToLpf(hi);
+    var loBelow = card.querySelector('.band-low-below');
+    var hiBelow = card.querySelector('.band-high-below');
+    if (loBelow) {
+      loBelow.textContent = fmtFreq(hpf);
+      loBelow.style.left = lo + '%';
+      loBelow.style.opacity = hpf > 0 ? '1' : '0';
+    }
+    if (hiBelow) {
+      hiBelow.textContent = fmtFreq(lpf);
+      hiBelow.style.left = hi + '%';
+      hiBelow.style.opacity = lpf > 0 ? '1' : '0';
+    }
+    var state = card.querySelector('.band-val');
+    if (state) {
+      if (hpf <= 0 && lpf <= 0) {
+        state.textContent = '全频段';
+        state.className = 'filter-state band-val off';
+      } else if (hpf > 0 && lpf <= 0) {
+        state.textContent = '\u2265 ' + fmtFreq(hpf);
+        state.className = 'filter-state band-val';
+      } else if (hpf <= 0 && lpf > 0) {
+        state.textContent = '\u2264 ' + fmtFreq(lpf);
+        state.className = 'filter-state band-val';
+      } else {
+        state.textContent = Math.round(hpf) + ' \u2013 ' + fmtFreq(lpf);
+        state.className = 'filter-state band-val';
+      }
     }
   }
 
@@ -322,36 +392,26 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       var muted = !!dev.muted;
       var prev = previous[dev.id];
       var enabled = dev.isDefault ? false : (prev ? prev.enabled : true);
-      var hpfPos = !dev.isDefault && prev ? freqToSlider(prev.hpf, 'hpf') : 0;
-      var lpfPos = !dev.isDefault && prev ? freqToSlider(prev.lpf, 'lpf') : 0;
+      var lowPos = !dev.isDefault && prev ? hpfToLowPos(prev.hpf) : 0;
+      var highPos = !dev.isDefault && prev ? lpfToHighPos(prev.lpf) : 100;
       card.dataset.muted = muted ? 'true' : 'false';
       var statusText = dev.isDefault ? '默认捕获源' : '已连接';
       var enableHtml = dev.isDefault ? '' : '<label class="cb-wrap"><input type="checkbox" class="dev-enable" ' + (enabled ? 'checked' : '') + '><span class="cb-custom"></span></label>';
       var filterHtml = dev.isDefault ? '' :
         '<div class="filter-row">' +
           '<div class="filter-head">' +
-            '<div class="filter-title">高通滤波器<span class="abbr">(HPF)</span></div>' +
-            '<div class="filter-state hpf-val off">OFF</div>' +
+            '<div class="filter-title">通过频段<span class="abbr">(HPF~LPF)</span></div>' +
+            '<div class="filter-state band-val off">全频段</div>' +
           '</div>' +
           '<div class="slider-wrap">' +
             '<span class="slider-label">20Hz</span>' +
-            '<div class="slider-main">' +
-              '<input type="range" class="hpf-slider" min="0" max="100" value="' + hpfPos + '" data-label-target="hpf-under">' +
-              '<span class="slider-value-below hpf-under" style="left:0%;opacity:0">0Hz</span>' +
-            '</div>' +
-            '<span class="slider-label right">2000Hz</span>' +
-          '</div>' +
-        '</div>' +
-        '<div class="filter-row">' +
-          '<div class="filter-head">' +
-            '<div class="filter-title">低通滤波器<span class="abbr">(LPF)</span></div>' +
-            '<div class="filter-state lpf-val off">OFF</div>' +
-          '</div>' +
-          '<div class="slider-wrap">' +
-            '<span class="slider-label">500Hz</span>' +
-            '<div class="slider-main">' +
-              '<input type="range" class="lpf-slider" min="0" max="100" value="' + lpfPos + '" data-label-target="lpf-under">' +
-              '<span class="slider-value-below lpf-under" style="left:0%;opacity:0">0Hz</span>' +
+            '<div class="band-slider">' +
+              '<div class="band-track"></div>' +
+              '<div class="band-fill"></div>' +
+              '<input type="range" class="band-low" min="0" max="100" value="' + lowPos + '">' +
+              '<input type="range" class="band-high" min="0" max="100" value="' + highPos + '">' +
+              '<span class="band-below band-low-below" style="left:0%;opacity:0">OFF</span>' +
+              '<span class="band-below band-high-below" style="left:100%;opacity:0">OFF</span>' +
             '</div>' +
             '<span class="slider-label right">20000Hz</span>' +
           '</div>' +
@@ -373,48 +433,29 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
       c.appendChild(card);
 
       var volSlider = card.querySelector('.vol-slider');
-      var hpfSlider = card.querySelector('.hpf-slider');
-      var lpfSlider = card.querySelector('.lpf-slider');
+      var bandLow = card.querySelector('.band-low');
+      var bandHigh = card.querySelector('.band-high');
       updateSlider(volSlider);
-      if (hpfSlider) updateSlider(hpfSlider);
-      if (lpfSlider) updateSlider(lpfSlider);
+      if (bandLow && bandHigh) updateBand(card);
       updateMuteUi(card);
 
       volSlider.addEventListener('input', function() {
         setVolumeUi(card, parseInt(this.value), card.dataset.muted === 'true', false);
         sendUpdateDebounced(dev.id);
       });
-      if (hpfSlider) {
-        hpfSlider.addEventListener('input', function() {
-          var f = sliderToFreq(parseInt(this.value), 'hpf');
-          var el = card.querySelector('.hpf-val');
-          var under = card.querySelector('.hpf-under');
-          el.textContent = fmtFreq(f);
-          el.className = 'filter-state hpf-val' + (f > 0 ? '' : ' off');
-          if (f > 0) {
-            under.textContent = fmtFreq(f);
-            under.style.opacity = '1';
-          } else {
-            under.style.opacity = '0';
-          }
-          updateSlider(this);
+      if (bandLow && bandHigh) {
+        bandLow.addEventListener('input', function() {
+          var lo = parseInt(this.value);
+          var hi = parseInt(bandHigh.value);
+          if (lo > hi - BAND_MIN_GAP) { lo = hi - BAND_MIN_GAP; this.value = lo; }
+          updateBand(card);
           sendUpdateDebounced(dev.id);
         });
-      }
-      if (lpfSlider) {
-        lpfSlider.addEventListener('input', function() {
-          var f = sliderToFreq(parseInt(this.value), 'lpf');
-          var el = card.querySelector('.lpf-val');
-          var under = card.querySelector('.lpf-under');
-          el.textContent = fmtFreq(f);
-          el.className = 'filter-state lpf-val' + (f > 0 ? '' : ' off');
-          if (f > 0) {
-            under.textContent = fmtFreq(f);
-            under.style.opacity = '1';
-          } else {
-            under.style.opacity = '0';
-          }
-          updateSlider(this);
+        bandHigh.addEventListener('input', function() {
+          var hi = parseInt(this.value);
+          var lo = parseInt(bandLow.value);
+          if (hi < lo + BAND_MIN_GAP) { hi = lo + BAND_MIN_GAP; this.value = hi; }
+          updateBand(card);
           sendUpdateDebounced(dev.id);
         });
       }
@@ -489,16 +530,16 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
     var dev = devices.find(function(d) { return d.id === id; }) || {};
     var isDefault = !!dev.isDefault;
     var enableBox = card.querySelector('.dev-enable');
-    var hpfSlider = card.querySelector('.hpf-slider');
-    var lpfSlider = card.querySelector('.lpf-slider');
+    var bandLow = card.querySelector('.band-low');
+    var bandHigh = card.querySelector('.band-high');
     return {
       id: id,
       name: dev.name || card.querySelector('.dev-name').textContent,
       enabled: isDefault ? false : !!(enableBox && enableBox.checked),
       volume: parseInt(card.querySelector('.vol-slider').value),
       muted: card.dataset.muted === 'true',
-      hpf: isDefault || !hpfSlider ? 0 : Math.round(sliderToFreq(parseInt(hpfSlider.value), 'hpf')),
-      lpf: isDefault || !lpfSlider ? 0 : Math.round(sliderToFreq(parseInt(lpfSlider.value), 'lpf'))
+      hpf: isDefault || !bandLow ? 0 : lowPosToHpf(parseInt(bandLow.value)),
+      lpf: isDefault || !bandHigh ? 0 : highPosToLpf(parseInt(bandHigh.value))
     };
   }
 
@@ -667,7 +708,7 @@ input[type=range]:disabled::-webkit-slider-runnable-track{background:#222242;opa
 
   // 鼠标按下时发起缩放或拖动
   document.addEventListener('mousedown', function(e) {
-    if (e.target.closest('input, button, label, .cb-wrap, .dev-icon, .vol-slider, .vol-icon, .hpf-slider, .lpf-slider')) return;
+    if (e.target.closest('input, button, label, .cb-wrap, .dev-icon, .vol-slider, .vol-icon, .band-slider, .band-low, .band-high')) return;
     var action = hitTest(e.clientX, e.clientY);
     if (action) {
       e.preventDefault();

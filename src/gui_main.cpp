@@ -333,7 +333,7 @@ public:
         RegisterClassW(&wc);
 
         // WS_POPUP + WS_THICKFRAME: 无可见边框，但保留系统缩放能力
-        RECT wr = { 0, 0, 1000, 1150 };
+        RECT wr = { 0, 0, 1000, 900 };
         AdjustWindowRect(&wr, WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU, FALSE);
         int screenW = GetSystemMetrics(SM_CXSCREEN);
         int screenH = GetSystemMetrics(SM_CYSCREEN);
