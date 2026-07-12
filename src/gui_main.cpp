@@ -1,6 +1,5 @@
 #include <windows.h>
 #include <dwmapi.h>
-#include <shellapi.h>
 #include <mmdeviceapi.h>
 #include <WebView2.h>
 #include <string>
@@ -580,18 +579,20 @@ private:
     }
 
     bool initWebView() {
-        // Load WebView2Loader.dll dynamically
-        wv2Dll_ = LoadLibraryW(L"WebView2Loader.dll");
-        if (!wv2Dll_) {
-            MessageBoxW(hwnd_, L"WebView2Loader.dll not found.\nPlease ensure WebView2 Runtime is installed.",
-                L"Error", MB_OK | MB_ICONERROR);
-            return false;
-        }
         return createWebViewInstance();
     }
 
     bool createWebViewInstance() {
-        if (!wv2Dll_) return false;
+        // 懒加载 WebView2Loader.dll：--autostart 静默模式下 init() 不会调用
+        // initWebView()，需要等到从托盘/单实例唤起恢复 UI 时才加载
+        if (!wv2Dll_) {
+            wv2Dll_ = LoadLibraryW(L"WebView2Loader.dll");
+            if (!wv2Dll_) {
+                MessageBoxW(hwnd_, L"WebView2Loader.dll not found.\nPlease ensure WebView2 Runtime is installed.",
+                    L"Error", MB_OK | MB_ICONERROR);
+                return false;
+            }
+        }
         if (webViewCreating_ || webView_) return true;
 
         typedef HRESULT(STDMETHODCALLTYPE* PFN_CreateEnv)(
