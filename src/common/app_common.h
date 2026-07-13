@@ -106,5 +106,5 @@ private:
     T* ptr_ = nullptr;
 };
 
-inline const GUID kAudioFluxVolumeContext =
+inline const GUID kAudioSurgeVolumeContext =
     {0x4f23ec26, 0x66ba, 0x4c9f, {0x96, 0x27, 0x7d, 0x97, 0xf2, 0x57, 0xd9, 0x5b}};

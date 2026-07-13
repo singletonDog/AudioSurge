@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(AudioFlux)
+project(AudioSurge)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -9,7 +9,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # GUI 版本（WIN32 = 使用 wWinMain 入口）
-add_executable(AudioFlux WIN32
+add_executable(AudioSurge WIN32
     src/gui_main.cpp
     src/audio/audio_devices.cpp
     src/audio/audio_engine.cpp
@@ -22,17 +22,17 @@ add_executable(AudioFlux WIN32
 
 # 让资源在图标文件变化时自动重编（.rc 默认不跟踪 ICON 引用的 .ico）
 set_source_files_properties(src/app.rc PROPERTIES
-    OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/assets/audioflux.ico
+    OBJECT_DEPENDS ${CMAKE_SOURCE_DIR}/assets/audiosurge.ico
 )
 
-target_include_directories(AudioFlux PRIVATE
+target_include_directories(AudioSurge PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/audio
     ${CMAKE_SOURCE_DIR}/src/system
     ${CMAKE_SOURCE_DIR}/src/common
 )
 
-target_link_libraries(AudioFlux
+target_link_libraries(AudioSurge
     ole32
     oleaut32
     uuid
@@ -43,26 +43,26 @@ target_link_libraries(AudioFlux
     advapi32
 )
 
-target_compile_definitions(AudioFlux PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
+target_compile_definitions(AudioSurge PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE)
 
 # 构建后把 WebView2Loader.dll 拷到可执行文件输出目录，方便直接分发运行
-add_custom_command(TARGET AudioFlux POST_BUILD
+add_custom_command(TARGET AudioSurge POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/include/WebView2Loader.dll
-        $<TARGET_FILE_DIR:AudioFlux>/WebView2Loader.dll
+        $<TARGET_FILE_DIR:AudioSurge>/WebView2Loader.dll
     COMMENT "Copying WebView2Loader.dll to output directory"
 )
 
 # MinGW 需要 -municode 支持 wWinMain 入口
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(AudioFlux PRIVATE -municode)
-    target_link_options(AudioFlux PRIVATE -municode)
+    target_compile_options(AudioSurge PRIVATE -municode)
+    target_link_options(AudioSurge PRIVATE -municode)
 
     # 体积优化：按段拆分 + 链接期回收未用段 + strip 符号
-    target_compile_options(AudioFlux PRIVATE
+    target_compile_options(AudioSurge PRIVATE
         $<$<CONFIG:Release>:-Os -ffunction-sections -fdata-sections>
     )
-    target_link_options(AudioFlux PRIVATE
+    target_link_options(AudioSurge PRIVATE
         $<$<CONFIG:Release>:-Wl,--gc-sections -s>
     )
 endif()

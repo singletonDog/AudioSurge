@@ -24,7 +24,7 @@ public:
 
     HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA data) override {
         if (!data || !owner_) return S_OK;
-        if (IsSameGuid(data->guidEventContext, kAudioFluxVolumeContext)) return S_OK;
+        if (IsSameGuid(data->guidEventContext, kAudioSurgeVolumeContext)) return S_OK;
         owner_->notify(device_id_, ScalarToVolume(data->fMasterVolume), data->bMuted != FALSE);
         return S_OK;
     }
@@ -75,8 +75,8 @@ bool SystemVolumeManager::setState(const std::string& deviceId, int volume, bool
     auto endpoint = getEndpoint(deviceId);
     if (!endpoint) return false;
 
-    HRESULT hr1 = endpoint->SetMasterVolumeLevelScalar(VolumeToScalar(volume), &kAudioFluxVolumeContext);
-    HRESULT hr2 = endpoint->SetMute(muted ? TRUE : FALSE, &kAudioFluxVolumeContext);
+    HRESULT hr1 = endpoint->SetMasterVolumeLevelScalar(VolumeToScalar(volume), &kAudioSurgeVolumeContext);
+    HRESULT hr2 = endpoint->SetMute(muted ? TRUE : FALSE, &kAudioSurgeVolumeContext);
     return SUCCEEDED(hr1) && SUCCEEDED(hr2);
 }
 

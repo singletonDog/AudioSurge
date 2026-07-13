@@ -4,7 +4,7 @@ import os
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PNG = os.path.join(ROOT, "assets", "audioFlux.png")
+PNG = os.path.join(ROOT, "assets", "audiosurge.png")
 UI = os.path.join(ROOT, "src", "common", "embedded_ui.h")
 
 im = Image.open(PNG).convert("RGBA")
@@ -19,7 +19,7 @@ with open(UI, "r", encoding="utf-8") as f:
     html = f.read()
 
 old = '<div class="title-logo">&#9835;</div>'
-new = '<div class="title-logo"><img src="' + data_uri + '" alt="AudioFlux"></div>'
+new = '<div class="title-logo"><img src="' + data_uri + '" alt="AudioSurge"></div>'
 if old not in html:
     raise SystemExit("marker not found: title-logo")
 html = html.replace(old, new, 1)

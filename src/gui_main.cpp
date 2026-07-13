@@ -51,9 +51,9 @@ struct VolumeChangedEvent {
 // ============================================================================
 
 static const wchar_t* kAutoStartRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-static const wchar_t* kAutoStartValueName = L"AudioFlux";
+static const wchar_t* kAutoStartValueName = L"AudioSurge";
 
-// 返回带 --autostart 标志的自启动命令行，形如："C:\path\AudioFlux.exe" --autostart
+// 返回带 --autostart 标志的自启动命令行，形如："C:\path\AudioSurge.exe" --autostart
 static std::wstring BuildAutoStartCommand() {
     wchar_t exePath[MAX_PATH];
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -389,7 +389,7 @@ public:
         WNDCLASSW wc = {};
         wc.lpfnWndProc = &App::StaticWndProc;
         wc.hInstance = hInst;
-        wc.lpszClassName = L"AudioFluxWnd";
+        wc.lpszClassName = L"AudioSurgeWnd";
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = nullptr;
         wc.hIcon = appIcon;
@@ -405,7 +405,7 @@ public:
         int x = (screenW - winW) / 2;
         int y = (screenH - winH) / 2;
 
-        hwnd_ = CreateWindowExW(0, L"AudioFluxWnd", L"AudioFlux",
+        hwnd_ = CreateWindowExW(0, L"AudioSurgeWnd", L"AudioSurge",
             WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
             x, y, winW, winH, nullptr, nullptr, hInst, this);
         if (!hwnd_) return false;
@@ -534,7 +534,7 @@ private:
         nid_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid_.uCallbackMessage = WM_APP_TRAYICON;
         nid_.hIcon = LoadIconW(hInstance_, MAKEINTRESOURCEW(IDI_APPICON));
-        wcscpy_s(nid_.szTip, L"AudioFlux");
+        wcscpy_s(nid_.szTip, L"AudioSurge");
         if (Shell_NotifyIconW(NIM_ADD, &nid_)) {
             trayEnabled_ = true;
         }
@@ -1108,10 +1108,10 @@ private:
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     // 注册全局唤起消息，用于让已运行实例显示到前台
-    g_showInstanceMsg = RegisterWindowMessageW(L"AudioFluxShowInstanceMsg");
+    g_showInstanceMsg = RegisterWindowMessageW(L"AudioSurgeShowInstanceMsg");
 
     // 单实例：命名 Mutex 检测是否已有实例在运行
-    HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"AudioFlux_SingleInstance_Mutex");
+    HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, L"AudioSurge_SingleInstance_Mutex");
     if (instanceMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         // 已有实例：广播唤起消息让其显示，然后退出本进程
         if (g_showInstanceMsg) {

@@ -1,15 +1,15 @@
 ---
-name: "audioflux-project-structure"
-description: "说明 AudioFlux 最新项目架构和关键文件。处理本仓库任务、询问结构、模块职责或功能修改位置时调用。"
+name: "audiosurge-project-structure"
+description: "说明 AudioSurge 最新项目架构和关键文件。处理本仓库任务、询问结构、模块职责或功能修改位置时调用。"
 ---
 
-# AudioFlux 项目结构
+# AudioSurge 项目结构
 
-当用户询问本仓库的架构、代码位置、模块连接方式，或需要判断某个 AudioFlux 功能应该在哪里修改时，使用此 Skill，避免重复探索项目布局。
+当用户询问本仓库的架构、代码位置、模块连接方式，或需要判断某个 AudioSurge 功能应该在哪里修改时，使用此 Skill，避免重复探索项目布局。
 
 ## 项目概览
 
-AudioFlux 是一个 Windows C++17 桌面音频应用。
+AudioSurge 是一个 Windows C++17 桌面音频应用。
 
 它使用：
 
@@ -27,7 +27,7 @@ AudioFlux 是一个 Windows C++17 桌面音频应用。
 - 开机自启动（HKCU Run 键 + `--autostart` 静默后台运行）。
 - 命名 Mutex 单实例：再次启动时唤回已运行实例。
 - 隐藏到托盘/后台时挂起（释放）WebView2 以降低内存占用，恢复时重建。
-- 内嵌应用图标资源（`src/app.rc` + `assets/audioflux.ico`）。
+- 内嵌应用图标资源（`src/app.rc` + `assets/audiosurge.ico`）。
 - CMake 构建 GUI 可执行程序（默认 Release，含体积优化与 DLL 拷贝）。
 
 高层数据流：
@@ -52,8 +52,8 @@ WebView2 UI
 d:\Project\audio
 ├─ CMakeLists.txt
 ├─ assets/
-│  ├─ audioflux.ico
-│  └─ audioflux.png
+│  ├─ audiosurge.ico
+│  └─ audiosurge.png
 ├─ tools/
 │  └─ embed_logo.py
 ├─ include/
@@ -101,7 +101,7 @@ build/
 当前可执行目标：
 
 ```cmake
-add_executable(AudioFlux WIN32
+add_executable(AudioSurge WIN32
     src/gui_main.cpp
     src/audio/audio_devices.cpp
     src/audio/audio_engine.cpp
@@ -112,7 +112,7 @@ add_executable(AudioFlux WIN32
     src/app.rc
 )
 
-target_include_directories(AudioFlux PRIVATE
+target_include_directories(AudioSurge PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/audio
     ${CMAKE_SOURCE_DIR}/src/system
@@ -126,7 +126,7 @@ target_include_directories(AudioFlux PRIVATE
 - 默认构建类型：未指定时强制为 `Release`，便于体积/性能优化。
 - GUI 入口：`src/gui_main.cpp` 中的 `wWinMain`。
 - WebView2 头文件来自 `include/`。
-- 资源编译：`src/app.rc` 内嵌 `assets/audioflux.ico`（`IDI_APPICON`）；通过 `set_source_files_properties(... OBJECT_DEPENDS ...)` 让图标变化触发重编。
+- 资源编译：`src/app.rc` 内嵌 `assets/audiosurge.ico`（`IDI_APPICON`）；通过 `set_source_files_properties(... OBJECT_DEPENDS ...)` 让图标变化触发重编。
 - 构建后 POST_BUILD 自动把 `include/WebView2Loader.dll` 拷到可执行文件输出目录，便于直接分发运行。
 - 链接的 Windows 库：
   - `ole32`
@@ -174,7 +174,7 @@ cmake --build build
 - 注册默认输出设备变化监听。
 - 管理系统托盘图标（`enableTray`/`disableTray`/`showTrayMenu`/`restoreFromTray`）。
 - 管理开机自启动注册表项（`IsAutoStartEnabled`/`SetAutoStart`/`BuildAutoStartCommand`）。
-- 命名 Mutex 单实例检测 + 广播唤起消息（`AudioFluxShowInstanceMsg`）。
+- 命名 Mutex 单实例检测 + 广播唤起消息（`AudioSurgeShowInstanceMsg`）。
 - 隐藏到托盘/后台时挂起 WebView2（`suspendWebView`），恢复时重建（`resumeWebView`）。
 - `--autostart` 静默模式：不建 WebView，直接按保存配置后台转发（`autoStartForwarding`）。
 - 使用 `WM_APP_VOLUME_CHANGED` 将系统音量回调派发回 UI 线程。
@@ -297,7 +297,7 @@ static const char* kHtmlContent = R"html(... )html";
 - 定义 `DeviceConfig`。
 - 定义 `RuntimeUpdateResult`。
 - 管理 `SharedAudioBuffer`、`WasapiCapture`、`WasapiOutput`。
-- 启动/停止 AudioFlux 音频链路。
+- 启动/停止 AudioSurge 音频链路。
 - 运行中启停单个输出设备。
 - 更新每设备 HPF/LPF 参数。
 - 默认输出设备变化时按当前配置重启音频链路，让捕获源跟随系统默认设备。
@@ -376,7 +376,7 @@ std::vector<DeviceInfo> WasapiOutput::enumerateDevices() {
 - 设置指定设备系统音量/静音状态。
 - 注册每设备 `IAudioEndpointVolumeCallback`。
 - 外部修改 Windows 音量/静音后，通过 callback 通知 `src/gui_main.cpp`。
-- 跳过 AudioFlux 自己触发的音量事件，避免回环。
+- 跳过 AudioSurge 自己触发的音量事件，避免回环。
 - 清理不存在设备的音量监听。
 
 主类：
@@ -396,7 +396,7 @@ class SystemVolumeManager
 
 系统音量同步路径：
 
-AudioFlux UI 到 Windows：
+AudioSurge UI 到 Windows：
 
 ```text
 用户拖动 .vol-slider 或点击 .vol-icon
@@ -406,7 +406,7 @@ AudioFlux UI 到 Windows：
   -> SystemVolumeManager::setState(deviceId, volume, muted)
 ```
 
-Windows 到 AudioFlux UI：
+Windows 到 AudioSurge UI：
 
 ```text
 外部系统音量/静音变化
@@ -434,7 +434,7 @@ Windows 到 AudioFlux UI：
 - `FormatHResult`
 - `HResultMessage`
 - `ComPtr<T>` 轻量 COM RAII 指针
-- `kAudioFluxVolumeContext`
+- `kAudioSurgeVolumeContext`
 
 `ComPtr<T>` 目前优先用于新拆分模块，例如：
 
@@ -445,7 +445,7 @@ Windows 到 AudioFlux UI：
 
 ### `src/common/app_state.h` / `src/common/app_state.cpp`
 
-这个模块负责应用本地状态持久化，数据以 JSON 存放在 exe 同目录的 `AudioFlux.state.json`（与 `WebView2Data` 相邻）。
+这个模块负责应用本地状态持久化，数据以 JSON 存放在 exe 同目录的 `AudioSurge.state.json`（与 `WebView2Data` 相邻）。
 
 主要职责：
 
@@ -482,9 +482,9 @@ class AppState
 应用图标资源。
 
 - `src/resource.h`：定义 `IDI_APPICON`（值 101）。
-- `src/app.rc`：`IDI_APPICON ICON "../assets/audioflux.ico"`。
-- `assets/audioflux.ico`：窗口标题栏、任务栏和托盘图标来源。
-- `assets/audioflux.png`：图标源图；`tools/embed_logo.py` 为相关的辅助脚本（生成/嵌入 logo）。
+- `src/app.rc`：`IDI_APPICON ICON "../assets/audiosurge.ico"`。
+- `assets/audiosurge.ico`：窗口标题栏、任务栏和托盘图标来源。
+- `assets/audiosurge.png`：图标源图；`tools/embed_logo.py` 为相关的辅助脚本（生成/嵌入 logo）。
 
 `src/gui_main.cpp` 通过 `LoadIconW(hInstance_, MAKEINTRESOURCEW(IDI_APPICON))` 加载图标用于窗口和托盘。
 
@@ -594,7 +594,7 @@ HPF/LPF 安全限制：
 - 每个流的每个声道各一个实例：`hpf_filters[MAX_CHANNELS]`、`lpf_filters[MAX_CHANNELS]`（非级联数组）。
 - `renderThread` 中频率变化时只重算系数、保留滤波器历史状态，仅在从 OFF(0) 打开时 `reset()`，避免拖动时产生咔哒/爆音。
 
-当前 UI 音量代表 Windows 系统端点音量，因此 AudioFlux 内部输出通常传入 100%，避免系统音量和内部音量双重缩放。
+当前 UI 音量代表 Windows 系统端点音量，因此 AudioSurge 内部输出通常传入 100%，避免系统音量和内部音量双重缩放。
 
 ### `src/audio/ring_buffer.h`
 
@@ -629,7 +629,7 @@ class SharedAudioBuffer
 
 ```text
 wWinMain
-  -> RegisterWindowMessageW("AudioFluxShowInstanceMsg")
+  -> RegisterWindowMessageW("AudioSurgeShowInstanceMsg")
   -> CreateMutexW 单实例检测（已存在则广播唤起消息并退出）
   -> CoInitializeEx
   -> 解析命令行是否含 --autostart（silent）
@@ -743,9 +743,9 @@ Windows 默认输出设备变化
 ### 单实例唤起
 
 ```text
-再次启动 AudioFlux.exe
+再次启动 AudioSurge.exe
   -> CreateMutexW 检测到已存在实例
-  -> PostMessageW(HWND_BROADCAST, AudioFluxShowInstanceMsg)
+  -> PostMessageW(HWND_BROADCAST, AudioSurgeShowInstanceMsg)
   -> 已运行实例 WndProc 收到 g_showInstanceMsg
   -> 恢复并前置窗口
   -> 新进程退出
@@ -754,7 +754,7 @@ Windows 默认输出设备变化
 ### 开机自启动（静默后台）
 
 ```text
-系统登录 -> 运行 "AudioFlux.exe" --autostart
+系统登录 -> 运行 "AudioSurge.exe" --autostart
   -> wWinMain silent=true
   -> App::init 不创建 WebView
   -> autoStartForwarding()
@@ -926,7 +926,7 @@ Windows 默认输出设备变化
 
 编辑：
 
-- `assets/audioflux.ico`（图标文件本体）。
+- `assets/audiosurge.ico`（图标文件本体）。
 - `src/app.rc` / `src/resource.h`（`IDI_APPICON` 引用）。
 - `CMakeLists.txt` 中 `set_source_files_properties(... OBJECT_DEPENDS ...)`（图标变化触发重编）。
 
@@ -986,8 +986,8 @@ GUI/音频修改的手动检查项：
 - 拖柄聚焦后方向键 ±1Hz、Shift+方向键 ±100Hz 精调生效。
 - 拖柄拉到两端时对应侧滤波关闭（状态显示“全频段”），拖动切换无咔哒/爆音。
 - 每设备系统音量滑块与 Windows 音量一致。
-- 外部 Windows 音量/静音变化能更新 AudioFlux UI。
-- 系统默认输出设备变化后，AudioFlux 捕获源跟随系统切换。
+- 外部 Windows 音量/静音变化能更新 AudioSurge UI。
+- 系统默认输出设备变化后，AudioSurge 捕获源跟随系统切换。
 - 双击设备图标能将其设为 Windows 默认输出设备。
 - 默认捕获源风险提示仍正常。
 - 窗口拖动、缩放、最小化、最大化、关闭仍正常。

@@ -118,7 +118,7 @@ JVal parseValue(const std::string& s, size_t& p) {
 } // namespace
 
 std::wstring AppState::filePath() const {
-    return ExeDir() + L"AudioFlux.state.json";
+    return ExeDir() + L"AudioSurge.state.json";
 }
 
 void AppState::load() {
